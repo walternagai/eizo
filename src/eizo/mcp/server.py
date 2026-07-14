@@ -7,7 +7,7 @@ via Model Context Protocol (MCP).
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Literal
 
 from mcp.server.fastmcp import FastMCP
 
@@ -15,6 +15,7 @@ from eizo.graph.store import GraphStore
 from eizo.queries import impact as impact_q
 from eizo.queries import search as search_q
 from eizo.queries import trace as trace_q
+from eizo.queries.analysis import find_dead_code, find_hotspots
 
 
 def _node_to_dict(node: Any) -> dict[str, Any]:
@@ -106,10 +107,49 @@ def create_server(store: GraphStore, port: int = 8765) -> FastMCP:
             "db_size_bytes": stats.db_size_bytes,
         }, indent=2, default=str)
 
+    @mcp.tool()
+    def find_dead_code_symbols(
+        limit: int = 100,
+        entrypoints: list[str] | None = None,
+    ) -> str:
+        """Encontra símbolos definidos sem nenhum caller/import (dead code).
+
+        Args:
+            limit: Máximo de resultados (padrão: 100).
+            entrypoints: Nomes de entrypoints a excluir (ex: ['main', 'serve']).
+                Se None, usa padrões: main, run, serve, app, create_app, etc.
+        """
+        eps = frozenset(entrypoints) if entrypoints else None
+        results = find_dead_code(store, entrypoints=eps, limit=limit)
+        return json.dumps([_node_to_dict(n) for n in results], indent=2, default=str)
+
+    @mcp.tool()
+    def get_hotspots(
+        limit: int = 20,
+        min_references: int = 2,
+    ) -> str:
+        """Retorna símbolos mais referenciados (hotspots de acoplamento).
+
+        Args:
+            limit: Máximo de resultados (padrão: 20).
+            min_references: Mínimo de referências para aparecer (padrão: 2).
+        """
+        results = find_hotspots(store, limit=limit, min_references=min_references)
+        return json.dumps([
+            {"node": _node_to_dict(r["node"]), "reference_count": r["reference_count"]}
+            for r in results
+        ], indent=2, default=str)
+
     return mcp
 
 
-def serve_mcp(store: GraphStore, port: int = 8765) -> None:
-    """Inicia o servidor MCP."""
+def serve_mcp(store: GraphStore, port: int = 8765, transport: Literal["sse", "stdio"] = "sse") -> None:
+    """Inicia o servidor MCP.
+
+    Args:
+        store: GraphStore com o grafo de conhecimento.
+        port: Porta para transporte SSE (ignorado se transport='stdio').
+        transport: Tipo de transporte — 'sse' (HTTP) ou 'stdio' (local).
+    """
     mcp = create_server(store, port)
-    mcp.run(transport="sse")
+    mcp.run(transport=transport)

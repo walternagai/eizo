@@ -55,7 +55,7 @@ class TestSchema:
             "SELECT value FROM meta WHERE key = 'schema_version'"
         ).fetchone()
         assert row is not None
-        assert row[0] == "1"
+        assert row[0] == "2"
 
         conn.close()
 

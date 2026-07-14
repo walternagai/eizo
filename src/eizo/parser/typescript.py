@@ -248,7 +248,20 @@ class TypeScriptParser(BaseParser):
                         for base_child in clause.children:
                             if base_child.type in ("identifier", "type_identifier"):
                                 base_name = _get_text(source, base_child)
-                                base_id = _node_id(base_name, file_path, base_child.start_point[0] + 1)
+                                base_line = base_child.start_point[0] + 1
+                                base_id = _node_id(base_name, file_path, base_line)
+                                # Cria nó stub para a classe base (pode estar em outro arquivo)
+                                base_node = Node(
+                                    id=base_id,
+                                    name=base_name,
+                                    kind="class",
+                                    file_path=file_path,
+                                    language="typescript",
+                                    line_start=base_line,
+                                    line_end=base_line,
+                                    metadata={"external": True},
+                                )
+                                nodes.append(base_node)
                                 edges.append(Edge(
                                     source_id=class_node.id,
                                     target_id=base_id,

@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -35,6 +35,23 @@ CREATE TABLE IF NOT EXISTS edges (
     UNIQUE(source_id, target_id, kind)
 );
 
+-- Tabela de indexação incremental: rastreia hash e mtime por arquivo.
+CREATE TABLE IF NOT EXISTS file_index (
+    file_path TEXT PRIMARY KEY,
+    content_hash TEXT NOT NULL,
+    mtime REAL NOT NULL,
+    indexed_at TEXT NOT NULL
+);
+
+-- Tabela virtual FTS5 para busca full-text sobre nome + docstring + code_snippet.
+-- Tabela FTS5 padrão (guarda próprio conteúdo): permite INSERT/DELETE direto.
+CREATE VIRTUAL TABLE IF NOT EXISTS nodes_fts USING fts5(
+    node_id UNINDEXED,
+    name,
+    docstring,
+    code_snippet
+);
+
 CREATE INDEX IF NOT EXISTS idx_nodes_name ON nodes(name);
 CREATE INDEX IF NOT EXISTS idx_nodes_kind ON nodes(kind);
 CREATE INDEX IF NOT EXISTS idx_nodes_language ON nodes(language);
@@ -43,6 +60,28 @@ CREATE INDEX IF NOT EXISTS idx_edges_source ON edges(source_id);
 CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(target_id);
 CREATE INDEX IF NOT EXISTS idx_edges_kind ON edges(kind);
 CREATE INDEX IF NOT EXISTS idx_edges_source_kind ON edges(source_id, kind);
+CREATE INDEX IF NOT EXISTS idx_file_index_path ON file_index(file_path);
+"""
+
+# Migrações incrementais (v1 → v2). Cada entrada adiciona o que faltava na
+# versão anterior. Rodam com "CREATE TABLE/VIRTUAL TABLE IF NOT EXISTS",
+# então são idempotentes.
+MIGRATION_V1_TO_V2 = """
+CREATE TABLE IF NOT EXISTS file_index (
+    file_path TEXT PRIMARY KEY,
+    content_hash TEXT NOT NULL,
+    mtime REAL NOT NULL,
+    indexed_at TEXT NOT NULL
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS nodes_fts USING fts5(
+    node_id UNINDEXED,
+    name,
+    docstring,
+    code_snippet
+);
+
+CREATE INDEX IF NOT EXISTS idx_file_index_path ON file_index(file_path);
 """
 
 
@@ -74,6 +113,29 @@ def init_db(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def migrate_db(conn: sqlite3.Connection) -> None:
+    """Aplica migrações incrementais baseadas na versão do schema registrada.
+
+    DBs já existentes (v1) recebem as migrações para v2. Novos DBs já nascem na
+    versão mais recente via `init_db`, então esta função é no-op para eles.
+    """
+    row = conn.execute(
+        "SELECT value FROM meta WHERE key = 'schema_version'"
+    ).fetchone()
+    if row is None:
+        return  # DB novo ainda sem meta; init_db cuidará.
+
+    current = int(row[0])
+
+    if current < 2:
+        conn.executescript(MIGRATION_V1_TO_V2)
+        conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+            ("schema_version", str(SCHEMA_VERSION)),
+        )
+        conn.commit()
+
+
 def open_db(path: Path) -> sqlite3.Connection:
     """Abre conexão com o banco SQLite e garante schema atualizado."""
     conn = sqlite3.connect(str(path))
@@ -85,5 +147,8 @@ def open_db(path: Path) -> sqlite3.Connection:
     cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='meta'")
     if cursor.fetchone() is None:
         init_db(conn)
+    else:
+        # DB já existe — aplica migrações pendentes
+        migrate_db(conn)
 
     return conn

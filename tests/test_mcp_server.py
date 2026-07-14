@@ -106,7 +106,7 @@ class TestCreateServer:
         assert isinstance(mcp, FastMCP)
 
     def test_all_five_tools_registered(self, store: GraphStore) -> None:
-        """As 5 tools MCP devem estar registradas com os nomes esperados."""
+        """As tools MCP devem estar registradas com os nomes esperados."""
         mcp = create_server(store, port=12345)
         tool_names = set(mcp._tool_manager._tools.keys())
         assert tool_names == {
@@ -115,6 +115,8 @@ class TestCreateServer:
             "trace_call_path",
             "analyze_impact",
             "get_architecture",
+            "find_dead_code_symbols",
+            "get_hotspots",
         }
 
     # ─── search_symbols ───
@@ -286,10 +288,19 @@ class TestServeMcp:
     """Testa serve_mcp() — deve criar servidor e chamar run()."""
 
     def test_serve_mcp_calls_run(self, store: GraphStore) -> None:
-        """serve_mcp cria o servidor e chama mcp.run(transport='sse')."""
+        """serve_mcp cria o servidor e chama mcp.run(transport='sse') por padrão."""
         with patch("eizo.mcp.server.create_server") as mock_create:
             mock_mcp = MagicMock()
             mock_create.return_value = mock_mcp
             serve_mcp(store, port=9999)
             mock_create.assert_called_once_with(store, 9999)
             mock_mcp.run.assert_called_once_with(transport="sse")
+
+    def test_serve_mcp_stdio_transport(self, store: GraphStore) -> None:
+        """serve_mcp com transport='stdio' chama mcp.run(transport='stdio')."""
+        with patch("eizo.mcp.server.create_server") as mock_create:
+            mock_mcp = MagicMock()
+            mock_create.return_value = mock_mcp
+            serve_mcp(store, port=9999, transport="stdio")
+            mock_create.assert_called_once_with(store, 9999)
+            mock_mcp.run.assert_called_once_with(transport="stdio")

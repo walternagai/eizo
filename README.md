@@ -41,15 +41,22 @@ make install
 ### Indexar um repositório
 
 ```bash
-# Indexa o diretório atual
+# Indexa o diretório atual (incremental — pula arquivos inalterados)
 eizo init
 
 # Indexa um diretório específico
 eizo init /caminho/do/projeto
 
-# Reconstrói o grafo do zero
+# Força reindexação de todos os arquivos
+eizo init --force
+
+# Reconstrói o grafo do zero (limpa DB + reindexa tudo)
 eizo init --rebuild
 ```
+
+A indexação é **incremental**: arquivos cujo conteúdo (hash SHA-256) não mudou
+desde a última indexação são pulados automaticamente. Use `--force` ou `--rebuild`
+para forçar reindexação completa.
 
 ### Buscar símbolos
 
@@ -90,6 +97,52 @@ eizo impact "DatabaseConnection"
 eizo impact "UserModel" --depth 5
 ```
 
+### Detectar código morto
+
+```bash
+# Lista símbolos definidos sem nenhum caller/import
+eizo dead
+
+# Exclui entrypoints customizados
+eizo dead --entrypoint my_handler --entrypoint my_cli
+```
+
+Símbolos como `main`, `run`, `serve`, `cli`, `app`, `create_app`, `setup`,
+`teardown`, `handle` são considerados entrypoints por padrão e excluídos
+da análise.
+
+### Hotspots (símbolos críticos)
+
+```bash
+# Top 20 símbolos mais referenciados
+eizo hotspots
+
+# Top 50 com mínimo de 5 referências
+eizo hotspots --limit 50 --min-refs 5
+```
+
+Símbolos com muitas referências são pontos críticos — mudanças neles têm
+alto impacto na base de código.
+
+### Exportar grafo
+
+```bash
+# Exporta para Graphviz DOT
+eizo export dot -o graph.dot
+dot -Tpng graph.dot -o graph.png  # renderiza com Graphviz
+
+# Exporta para Mermaid (renderiza em GitHub, GitLab, Notion)
+eizo export mermaid --kind class --edge-kind inherits
+
+# Exporta para JSON
+eizo export json --language python --limit 50 -o graph.json
+
+# Diagrama de classes Mermaid
+eizo export mermaid --diagram-type classDiagram
+```
+
+Filtros disponíveis: `--kind`, `--language`, `--limit`, `--edge-kind` (múltiplo).
+
 ### Visão arquitetural
 
 ```bash
@@ -121,17 +174,20 @@ Símbolos por Tipo
 ### Servidor MCP
 
 ```bash
-# Inicia servidor MCP na porta 8765
+# Inicia servidor MCP com transporte SSE (HTTP) na porta 8765
 eizo mcp
 
 # Porta customizada
 eizo mcp --port 9090
 
+# Transporte stdio (padrão para agents locais como Claude Code)
+eizo mcp --transport stdio
+
 # Repositório específico
 eizo mcp --path /caminho/do/projeto
 ```
 
-O servidor expõe 5 ferramentas MCP:
+O servidor expõe 7 ferramentas MCP:
 
 | Tool | Descrição |
 |------|-----------|
@@ -140,6 +196,8 @@ O servidor expõe 5 ferramentas MCP:
 | `trace_call_path` | Call graph de/para um símbolo |
 | `analyze_impact` | Cadeia de dependências |
 | `get_architecture` | Visão arquitetural do repositório |
+| `find_dead_code_symbols` | Detecta código morto |
+| `get_hotspots` | Símbolos mais referenciados |
 
 ### Status
 
@@ -151,13 +209,26 @@ eizo status
 
 | Comando | Descrição |
 |---------|-----------|
-| `eizo init [path]` | Indexa repositório no grafo |
+| `eizo init [path]` | Indexa repositório no grafo (incremental) |
 | `eizo search <query>` | Busca símbolos |
 | `eizo trace <symbol>` | Call graph |
 | `eizo impact <symbol>` | Análise de impacto |
 | `eizo arch` | Visão arquitetural |
+| `eizo dead` | Detecta código morto (sem callers) |
+| `eizo hotspots` | Símbolos mais referenciados |
+| `eizo export dot\|mermaid\|json` | Exporta grafo para visualização |
 | `eizo mcp` | Servidor MCP |
 | `eizo status` | Estatísticas do grafo |
+
+### Opção global `--format json`
+
+Todos os comandos de consulta suportam `--format json` para piping em scripts e agents:
+
+```bash
+eizo --format json search "UserModel" | jq '.[0].file_path'
+eizo --format json dead | jq 'length'
+eizo --format json hotspots --min-refs 3 | jq '.[] | .node.name'
+```
 
 ## Desenvolvimento
 

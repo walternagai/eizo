@@ -4,7 +4,19 @@ from __future__ import annotations
 
 from typing import Any
 
+from eizo.graph.models import Node
 from eizo.graph.store import GraphStore
+
+# Kinds que representam definições de símbolos (não call sites).
+_DEFINITION_KINDS: frozenset[str] = frozenset({"function", "method", "class"})
+
+
+def _resolve_symbol(nodes: list[Node]) -> Node:
+    """Seleciona definição com match exato primeiro; fallback para primeiro nó."""
+    for n in nodes:
+        if n.kind in _DEFINITION_KINDS:
+            return n
+    return nodes[0]
 
 
 def analyze_impact(
@@ -29,7 +41,7 @@ def analyze_impact(
     if not nodes:
         return {"symbol": None, "impact_chain": []}
 
-    symbol = nodes[0]
+    symbol = _resolve_symbol(nodes)
     impact_chain = _build_impact_chain(store, symbol.id, max_depth)
 
     return {
@@ -54,6 +66,7 @@ def _build_impact_chain(
 
     visited.add(node_id)
     results: list[dict[str, Any]] = []
+    seen_callers: set[str] = set()
 
     # Quem importa este símbolo
     import_edges = store.get_incoming_edges(node_id, kind="imports")
@@ -85,11 +98,14 @@ def _build_impact_chain(
                 inh_entry["dependents"] = deeper
             results.append(inh_entry)
 
-    # Quem chama este símbolo
+    # Quem chama este símbolo (arestas diretas)
     call_edges = store.get_incoming_edges(node_id, kind="calls")
     for edge in call_edges:
         dependent = store.get_node(edge.source_id)
         if dependent:
+            if dependent.id in seen_callers:
+                continue
+            seen_callers.add(dependent.id)
             call_entry: dict[str, Any] = {
                 "node": dependent,
                 "relation": "calls",
@@ -99,5 +115,32 @@ def _build_impact_chain(
             if deeper:
                 call_entry["dependents"] = deeper
             results.append(call_entry)
+
+    # Quem chama este símbolo via call sites (caller → call_site com mesmo nome)
+    target = store.get_node(node_id)
+    if target is not None:
+        call_sites = store.get_nodes_by_name(target.name, kind="call")
+        for call_site in call_sites:
+            if call_site.id == node_id:
+                continue
+            site_edges = store.get_incoming_edges(call_site.id, kind="calls")
+            for edge in site_edges:
+                dependent = store.get_node(edge.source_id)
+                if not dependent:
+                    continue
+                if dependent.id in seen_callers:
+                    continue
+                seen_callers.add(dependent.id)
+                call_entry2: dict[str, Any] = {
+                    "node": dependent,
+                    "relation": "calls",
+                    "depth": current_depth + 1,
+                }
+                deeper2 = _build_impact_chain(
+                    store, dependent.id, max_depth, current_depth + 1, visited
+                )
+                if deeper2:
+                    call_entry2["dependents"] = deeper2
+                results.append(call_entry2)
 
     return results

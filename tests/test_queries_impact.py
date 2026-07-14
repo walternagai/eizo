@@ -117,3 +117,69 @@ class TestImpactQueries:
         assert "dependents" in entry
         assert len(entry["dependents"]) == 1
         assert entry["dependents"][0]["relation"] == "calls"
+
+
+class TestImpactCallSiteResolution:
+    """Testes para resolução de call sites no impacto (Fix B)."""
+
+    def test_impact_finds_callers_via_call_sites(self, store) -> None:
+        """analyze_impact deve encontrar callers de uma definição através
+        de call sites com mesmo nome (Bug 2 do relatório)."""
+        store.upsert_nodes([
+            Node(id="defn", name="core", kind="function",
+                 file_path="lib.py", language="python", line_start=50),
+            Node(id="call_x", name="core", kind="call",
+                 file_path="app.py", language="python", line_start=10),
+            Node(id="app_fn", name="main", kind="function",
+                 file_path="app.py", language="python", line_start=1),
+        ])
+        # Parser cria caller → call_site, não caller → definição
+        store.upsert_edges([
+            Edge(source_id="app_fn", target_id="call_x", kind="calls"),
+        ])
+
+        result = analyze_impact(store, "core")
+        assert result["symbol"] is not None
+        assert result["symbol"].id == "defn"
+        relations = [item["relation"] for item in result["impact_chain"]]
+        assert "calls" in relations
+        callers = [item["node"].name for item in result["impact_chain"]
+                   if item["relation"] == "calls"]
+        assert "main" in callers
+
+    def test_impact_prefers_definition_over_call_site(self, store) -> None:
+        """Quando existem definição e call site com mesmo nome, impact
+        deve analisar a definição, não o call site (Fix A)."""
+        store.upsert_nodes([
+            Node(id="defn", name="foo", kind="function",
+                 file_path="lib.py", language="python", line_start=20),
+            Node(id="call_x", name="foo", kind="call",
+                 file_path="app.py", language="python", line_start=5),
+        ])
+        result = analyze_impact(store, "foo")
+        assert result["symbol"] is not None
+        assert result["symbol"].kind == "function"
+        assert result["symbol"].id == "defn"
+
+    def test_impact_dedup_direct_and_via_call_site(self, store) -> None:
+        """Se o mesmo caller aparece via aresta direta e via call site,
+        não deve duplicar."""
+        store.upsert_nodes([
+            Node(id="defn", name="baz", kind="function",
+                 file_path="lib.py", language="python", line_start=10),
+            Node(id="call_site", name="baz", kind="call",
+                 file_path="a.py", language="python", line_start=5),
+            Node(id="caller", name="uses", kind="function",
+                 file_path="a.py", language="python", line_start=1),
+        ])
+        store.upsert_edges([
+            Edge(source_id="caller", target_id="defn", kind="calls"),
+            Edge(source_id="caller", target_id="call_site", kind="calls"),
+        ])
+
+        result = analyze_impact(store, "baz")
+        assert result["symbol"] is not None
+        call_entries = [item for item in result["impact_chain"]
+                        if item["relation"] == "calls"]
+        # Sem duplicação do mesmo caller
+        assert len(call_entries) == 1

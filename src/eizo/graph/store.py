@@ -75,6 +75,19 @@ class GraphStore:
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             data,
         )
+        # Sincroniza índice FTS5: remove entradas antigas e reinsere.
+        if nodes:
+            self.conn.executemany(
+                "DELETE FROM nodes_fts WHERE node_id = ?", [(n.id,) for n in nodes]
+            )
+            fts_data = [
+                (n.id, n.name or "", n.docstring or "", n.code_snippet or "")
+                for n in nodes
+            ]
+            self.conn.executemany(
+                "INSERT INTO nodes_fts (node_id, name, docstring, code_snippet) VALUES (?, ?, ?, ?)",
+                fts_data,
+            )
         self.conn.commit()
 
     def get_node(self, node_id: str) -> Node | None:
@@ -91,7 +104,7 @@ class GraphStore:
         language: str | None = None,
         limit: int = 50,
     ) -> list[Node]:
-        """Busca nós por nome (LIKE)."""
+        """Busca nós por nome (LIKE), priorizando match exato e definições."""
         sql = "SELECT * FROM nodes WHERE name LIKE ?"
         params: list[Any] = [f"%{query}%"]
 
@@ -102,8 +115,41 @@ class GraphStore:
             sql += " AND language = ?"
             params.append(language)
 
+        # Fix A: match exato primeiro, depois definições (function/method/class)
+        # antes de call sites (call/import/file)
+        sql += (
+            " ORDER BY"
+            " CASE WHEN name = ? THEN 0 ELSE 1 END,"
+            " CASE kind"
+            " WHEN 'function' THEN 0"
+            " WHEN 'method' THEN 1"
+            " WHEN 'class' THEN 2"
+            " WHEN 'call' THEN 3"
+            " WHEN 'import' THEN 4"
+            " WHEN 'file' THEN 5"
+            " ELSE 6 END,"
+            " name"
+        )
+        params.append(query)
+
         sql += " LIMIT ?"
         params.append(limit)
+
+        rows = self.conn.execute(sql, params).fetchall()
+        return [self._row_to_node(r) for r in rows]
+
+    def get_nodes_by_name(
+        self,
+        name: str,
+        kind: str | None = None,
+    ) -> list[Node]:
+        """Busca nós por nome exato (opcionalmente filtrados por kind)."""
+        sql = "SELECT * FROM nodes WHERE name = ?"
+        params: list[Any] = [name]
+
+        if kind:
+            sql += " AND kind = ?"
+            params.append(kind)
 
         rows = self.conn.execute(sql, params).fetchall()
         return [self._row_to_node(r) for r in rows]
@@ -118,6 +164,12 @@ class GraphStore:
 
     def delete_nodes_by_file(self, file_path: str) -> None:
         """Remove todos os nós e arestas de um arquivo."""
+        # Coleta IDs antes de deletar para limpar o FTS
+        rows = self.conn.execute(
+            "SELECT id FROM nodes WHERE file_path = ?", (file_path,)
+        ).fetchall()
+        node_ids = [r["id"] for r in rows]
+
         self.conn.execute(
             "DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file_path = ?)",
             (file_path,),
@@ -127,13 +179,88 @@ class GraphStore:
             (file_path,),
         )
         self.conn.execute("DELETE FROM nodes WHERE file_path = ?", (file_path,))
+
+        # Limpa índice FTS5
+        if node_ids:
+            self.conn.executemany(
+                "DELETE FROM nodes_fts WHERE node_id = ?", [(nid,) for nid in node_ids]
+            )
+
         self.conn.commit()
+
+    def search_nodes_fts(
+        self,
+        query: str,
+        kind: str | None = None,
+        language: str | None = None,
+        limit: int = 50,
+    ) -> list[Node]:
+        """Busca full-text (FTS5) sobre nome + docstring + code_snippet.
+
+        Suporta sintaxe FTS5: prefixo com '*', AND/OR, frases com aspas.
+        Retorna nós ordenados por relevância (rank FTS5).
+        """
+        # Sanitiza query para FTS5 — envolve em aspas se não for query avançada
+        fts_query = query if any(op in query for op in ('"', "*", "AND", "OR", "NOT")) else f'"{query}"'
+
+        sql = (
+            "SELECT n.* FROM nodes_fts f "
+            "JOIN nodes n ON n.id = f.node_id "
+            "WHERE nodes_fts MATCH ?"
+        )
+        params: list[Any] = [fts_query]
+
+        if kind:
+            sql += " AND n.kind = ?"
+            params.append(kind)
+        if language:
+            sql += " AND n.language = ?"
+            params.append(language)
+
+        sql += " ORDER BY rank LIMIT ?"
+        params.append(limit)
+
+        rows = self.conn.execute(sql, params).fetchall()
+        return [self._row_to_node(r) for r in rows]
 
     def clear_all(self) -> None:
         """Remove todos os nós e arestas."""
         self.conn.execute("DELETE FROM edges")
         self.conn.execute("DELETE FROM nodes")
+        self.conn.execute("DELETE FROM nodes_fts")
+        self.conn.execute("DELETE FROM file_index")
         self.conn.commit()
+
+    # ─── File index (incremental) ───────────────────────────────
+
+    def get_file_index_entry(self, file_path: str) -> dict[str, Any] | None:
+        """Retorna entry de indexação incremental para um arquivo, ou None."""
+        row = self.conn.execute(
+            "SELECT content_hash, mtime, indexed_at FROM file_index WHERE file_path = ?",
+            (file_path,),
+        ).fetchone()
+        if row is None:
+            return None
+        return {"content_hash": row["content_hash"], "mtime": row["mtime"], "indexed_at": row["indexed_at"]}
+
+    def upsert_file_index(self, file_path: str, content_hash: str, mtime: float, indexed_at: str) -> None:
+        """Insere ou atualiza entry de indexação incremental."""
+        self.conn.execute(
+            """INSERT OR REPLACE INTO file_index (file_path, content_hash, mtime, indexed_at)
+               VALUES (?, ?, ?, ?)""",
+            (file_path, content_hash, mtime, indexed_at),
+        )
+        self.conn.commit()
+
+    def delete_file_index(self, file_path: str) -> None:
+        """Remove entry de indexação incremental para um arquivo."""
+        self.conn.execute("DELETE FROM file_index WHERE file_path = ?", (file_path,))
+        self.conn.commit()
+
+    def is_file_unchanged(self, file_path: str, content_hash: str) -> bool:
+        """Verifica se o arquivo já está indexado com o mesmo hash (não precisa reindexar)."""
+        entry = self.get_file_index_entry(file_path)
+        return entry is not None and entry["content_hash"] == content_hash
 
     # ─── Edge operations ────────────────────────────────────────
 

@@ -98,3 +98,58 @@ class TestGraphStoreExtended:
         stats = store.get_stats()
         assert stats.by_edge_kind["calls"] == 1
         assert stats.by_edge_kind["imports"] == 1
+
+    def test_get_nodes_by_name_exact(self, store) -> None:
+        """get_nodes_by_name retorna apenas matches exatos."""
+        store.upsert_nodes([
+            Node(id="a1", name="foo", kind="function", file_path="a.py", language="python"),
+            Node(id="a2", name="foobar", kind="function", file_path="b.py", language="python"),
+            Node(id="a3", name="foo", kind="call", file_path="c.py", language="python"),
+        ])
+        results = store.get_nodes_by_name("foo")
+        assert len(results) == 2
+        assert all(r.name == "foo" for r in results)
+
+    def test_get_nodes_by_name_with_kind_filter(self, store) -> None:
+        """get_nodes_by_name filtra por kind."""
+        store.upsert_nodes([
+            Node(id="a1", name="foo", kind="function", file_path="a.py", language="python"),
+            Node(id="a2", name="foo", kind="call", file_path="c.py", language="python"),
+        ])
+        results = store.get_nodes_by_name("foo", kind="call")
+        assert len(results) == 1
+        assert results[0].kind == "call"
+
+    def test_get_nodes_by_name_no_match(self, store) -> None:
+        """get_nodes_by_name sem matches retorna lista vazia."""
+        store.upsert_node(Node(id="a", name="foo", kind="function",
+                               file_path="a.py", language="python"))
+        assert store.get_nodes_by_name("bar") == []
+
+    def test_search_nodes_prioritizes_definition_over_call(self, store) -> None:
+        """search_nodes deve ordenar definições antes de call sites (Fix A)."""
+        store.upsert_nodes([
+            Node(id="call_x", name="foo", kind="call",
+                 file_path="a.py", language="python", line_start=5),
+            Node(id="func_def", name="foo", kind="function",
+                 file_path="lib.py", language="python", line_start=20),
+        ])
+        results = store.search_nodes("foo")
+        assert len(results) == 2
+        # Definição primeiro
+        assert results[0].kind == "function"
+        assert results[1].kind == "call"
+
+    def test_search_nodes_exact_match_first(self, store) -> None:
+        """search_nodes prioriza match exato sobre substring."""
+        store.upsert_nodes([
+            Node(id="a1", name="foobar", kind="function",
+                 file_path="a.py", language="python"),
+            Node(id="a2", name="foo", kind="function",
+                 file_path="b.py", language="python"),
+        ])
+        results = store.search_nodes("foo")
+        assert len(results) == 2
+        # Match exato primeiro
+        assert results[0].name == "foo"
+        assert results[1].name == "foobar"

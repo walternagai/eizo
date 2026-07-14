@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import datetime as dt
+import hashlib
 from pathlib import Path
 
 from rich.console import Console
@@ -25,6 +27,11 @@ IGNORE_DIRS: set[str] = {
 IGNORE_FILES: set[str] = {
     ".DS_Store", "*.pyc", "*.pyo", "*.so", "*.dll", "*.dylib",
 }
+
+
+def _file_content_hash(source: str) -> str:
+    """Calcula hash SHA-256 do conteúdo do arquivo (primeiros 16 hex chars)."""
+    return hashlib.sha256(source.encode("utf-8")).hexdigest()[:16]
 
 
 def _should_ignore(path: Path) -> bool:
@@ -62,12 +69,17 @@ def _get_parser_for_file(file_path: Path, parsers: list[BaseParser]) -> BasePars
 def index_repository(
     repo_path: Path | str,
     store: GraphStore | None = None,
+    force: bool = False,
 ) -> GraphStore:
     """Indexa um repositório inteiro no grafo de conhecimento.
+
+    Usa indexação incremental: arquivos cujo conteúdo (hash) não mudou desde a
+    última indexação são pulados. Use `force=True` para reindexar tudo.
 
     Args:
         repo_path: Caminho do repositório.
         store: GraphStore existente (opcional). Se None, cria um novo.
+        force: Se True, reindexa todos os arquivos ignorando o cache.
 
     Returns:
         GraphStore populado.
@@ -97,7 +109,32 @@ def index_repository(
         console.print("[yellow]⚠ Nenhum arquivo parseável encontrado.[/yellow]")
         return store
 
-    console.print(f"[bold]Indexando {len(files)} arquivos em {repo_path}...[/bold]")
+    # Filtra arquivos inalterados (indexação incremental)
+    files_to_index: list[Path] = []
+    skipped = 0
+    for f in files:
+        if force:
+            files_to_index.append(f)
+            continue
+        try:
+            source = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        content_hash = _file_content_hash(source)
+        if store.is_file_unchanged(str(f), content_hash):
+            skipped += 1
+        else:
+            files_to_index.append(f)
+
+    if not files_to_index:
+        console.print(f"[green]✓ {len(files)} arquivo(s) já indexado(s), nada a fazer.[/green]")
+        console.print("  Use --rebuild para forçar reindexação completa.")
+        return store
+
+    action = "Reindexando" if force else "Indexando"
+    console.print(f"[bold]{action} {len(files_to_index)} arquivo(s) em {repo_path}...[/bold]")
+    if skipped > 0:
+        console.print(f"[dim]  {skipped} arquivo(s) inalterado(s) pulado(s)[/dim]")
 
     # Progresso
     progress = Progress(
@@ -113,9 +150,9 @@ def index_repository(
     errors: list[tuple[Path, str]] = []
 
     with progress:
-        task = progress.add_task("[cyan]Parseando arquivos...", total=len(files))
+        task = progress.add_task("[cyan]Parseando arquivos...", total=len(files_to_index))
 
-        for file_path in files:
+        for file_path in files_to_index:
             parser = _get_parser_for_file(file_path, parsers)
             if parser is None:
                 progress.advance(task)
@@ -130,6 +167,12 @@ def index_repository(
                 store.upsert_nodes(nodes)
                 store.upsert_edges(edges)
 
+                # Atualiza índice incremental
+                content_hash = _file_content_hash(source)
+                mtime = file_path.stat().st_mtime
+                indexed_at = dt.datetime.now(dt.timezone.utc).isoformat()
+                store.upsert_file_index(str(file_path), content_hash, mtime, indexed_at)
+
                 total_nodes += len(nodes)
                 total_edges += len(edges)
 
@@ -141,7 +184,9 @@ def index_repository(
     # Resumo
     stats = store.get_stats()
     console.print("\n[bold green]✓ Indexação concluída![/bold green]")
-    console.print(f"  Arquivos: {stats.total_files}")
+    console.print(f"  Arquivos indexados: {len(files_to_index)}")
+    console.print(f"  Arquivos pulados: {skipped}")
+    console.print(f"  Total no grafo: {stats.total_files} arquivos")
     console.print(f"  Nós: {stats.total_nodes}")
     console.print(f"  Arestas: {stats.total_edges}")
     console.print(f"  Linguagens: {', '.join(stats.by_language.keys())}")
