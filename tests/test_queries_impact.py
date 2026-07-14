@@ -73,3 +73,47 @@ class TestImpactQueries:
         assert len(result["impact_chain"]) == 1
         # middle depende de core, e top depende de middle
         assert "dependents" in result["impact_chain"][0]
+
+    def test_analyze_impact_transitive_inherits(self, store) -> None:
+        """Cadeia de impacto aninhada via inherits (cobre linha 85)."""
+        store.upsert_nodes([
+            Node(id="base", name="Base", kind="class", file_path="base.py", language="python"),
+            Node(id="child", name="Child", kind="class", file_path="child.py", language="python"),
+            Node(id="grandchild", name="Grandchild", kind="class", file_path="gc.py", language="python"),
+        ])
+        store.upsert_edges([
+            Edge(source_id="child", target_id="base", kind="inherits"),
+            Edge(source_id="grandchild", target_id="child", kind="inherits"),
+        ])
+
+        result = analyze_impact(store, "Base")
+        assert result["symbol"] is not None
+        assert len(result["impact_chain"]) == 1
+        entry = result["impact_chain"][0]
+        assert entry["relation"] == "inherits"
+        # child herda de base, e grandchild herda de child → dependents aninhado
+        assert "dependents" in entry
+        assert len(entry["dependents"]) == 1
+        assert entry["dependents"][0]["relation"] == "inherits"
+
+    def test_analyze_impact_transitive_calls(self, store) -> None:
+        """Cadeia de impacto aninhada via calls (cobre linha 100)."""
+        store.upsert_nodes([
+            Node(id="callee", name="callee", kind="function", file_path="c.py", language="python"),
+            Node(id="caller", name="caller", kind="function", file_path="cr.py", language="python"),
+            Node(id="top_caller", name="top_caller", kind="function", file_path="tc.py", language="python"),
+        ])
+        store.upsert_edges([
+            Edge(source_id="caller", target_id="callee", kind="calls"),
+            Edge(source_id="top_caller", target_id="caller", kind="calls"),
+        ])
+
+        result = analyze_impact(store, "callee")
+        assert result["symbol"] is not None
+        assert len(result["impact_chain"]) == 1
+        entry = result["impact_chain"][0]
+        assert entry["relation"] == "calls"
+        # caller chama callee, e top_caller chama caller → dependents aninhado
+        assert "dependents" in entry
+        assert len(entry["dependents"]) == 1
+        assert entry["dependents"][0]["relation"] == "calls"

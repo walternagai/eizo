@@ -268,3 +268,174 @@ function test() {
 """
         nodes, edges = parser.parse_file(Path("test.ts"), source)
         assert len(nodes) >= 1
+
+    # ─── parser/python.py: linhas 75-79 (RuntimeError quando PYTHON_LANGUAGE é None) ───
+
+    def test_python_parser_init_no_language(self) -> None:
+        """PythonParser.__init__ levanta RuntimeError se tree-sitter ausente."""
+        from eizo.parser import python as py_mod
+
+        original = py_mod.PYTHON_LANGUAGE
+        try:
+            py_mod.PYTHON_LANGUAGE = None
+            with pytest.raises(RuntimeError, match="tree-sitter-python"):
+                py_mod.PythonParser()
+        finally:
+            py_mod.PYTHON_LANGUAGE = original
+
+    # ─── parser/typescript.py: linhas 51-55 (RuntimeError quando TS_LANGUAGE é None) ───
+
+    def test_ts_parser_init_no_language(self) -> None:
+        """TypeScriptParser.__init__ levanta RuntimeError se tree-sitter ausente."""
+        from eizo.parser import typescript as ts_mod
+
+        original = ts_mod.TS_LANGUAGE
+        try:
+            ts_mod.TS_LANGUAGE = None
+            with pytest.raises(RuntimeError, match="tree-sitter-typescript"):
+                ts_mod.TypeScriptParser()
+        finally:
+            ts_mod.TS_LANGUAGE = original
+
+    # ─── parser/python.py: linha 153 (function sem name_node) ───
+
+    def test_handle_function_no_name(self) -> None:
+        """_handle_function com name_node=None retorna sem crashar."""
+        from eizo.parser.python import PythonParser
+
+        try:
+            parser = PythonParser()
+        except RuntimeError:
+            pytest.skip("tree-sitter-python não instalado")
+
+        node = MagicMock()
+        node.child_by_field_name.return_value = None
+        # Chama _handle_function diretamente com nó sem name
+        parser._handle_function(node, b"", "test.py", [], [], None)
+        # Se chegou aqui sem crashar, o early-return funcionou
+
+    # ─── parser/python.py: linha 199 (class sem name_node) ───
+
+    def test_handle_class_no_name(self) -> None:
+        """_handle_class com name_node=None retorna sem crashar."""
+        from eizo.parser.python import PythonParser
+
+        try:
+            parser = PythonParser()
+        except RuntimeError:
+            pytest.skip("tree-sitter-python não instalado")
+
+        node = MagicMock()
+        node.child_by_field_name.return_value = None
+        parser._handle_class(node, b"", "test.py", [], [], None)
+
+    # ─── parser/python.py: linha 287 (import_from sem module_name) ───
+
+    def test_handle_import_from_no_module(self) -> None:
+        """_handle_import_from com module_name=None retorna sem crashar."""
+        from eizo.parser.python import PythonParser
+
+        try:
+            parser = PythonParser()
+        except RuntimeError:
+            pytest.skip("tree-sitter-python não instalado")
+
+        node = MagicMock()
+        node.child_by_field_name.return_value = None
+        parser._handle_import_from(node, b"", "test.py", [], [], None)
+
+    # ─── parser/python.py: linha 324 (call sem function node) ───
+
+    def test_handle_call_no_function(self) -> None:
+        """_handle_call com func_node=None retorna sem crashar."""
+        from eizo.parser.python import PythonParser
+
+        try:
+            parser = PythonParser()
+        except RuntimeError:
+            pytest.skip("tree-sitter-python não instalado")
+
+        node = MagicMock()
+        node.child_by_field_name.return_value = None
+        parser._handle_call(node, b"", "test.py", [], [], None)
+
+    # ─── parser/python.py: linha 335 (call attribute sem attr) ───
+
+    def test_handle_call_attribute_no_attr(self) -> None:
+        """_handle_call com attribute node mas sem field 'attribute'."""
+        from eizo.parser.python import PythonParser
+
+        try:
+            parser = PythonParser()
+        except RuntimeError:
+            pytest.skip("tree-sitter-python não instalado")
+
+        func_node = MagicMock()
+        func_node.type = "attribute"
+        func_node.child_by_field_name.return_value = None  # attribute field ausente
+        node = MagicMock()
+        node.child_by_field_name.return_value = func_node
+        parser._handle_call(node, b"", "test.py", [], [], None)
+
+    # ─── parser/typescript.py: linha 176 (method sem name_node) ───
+
+    def test_handle_ts_method_no_name(self) -> None:
+        """_handle_method TS com name_node=None retorna sem crashar."""
+        from eizo.parser.typescript import TypeScriptParser
+
+        try:
+            parser = TypeScriptParser()
+        except RuntimeError:
+            pytest.skip("tree-sitter-typescript não instalado")
+
+        node = MagicMock()
+        node.child_by_field_name.return_value = None
+        parser._handle_method(node, b"", "test.ts", [], [], None)
+
+    # ─── parser/typescript.py: linha 274 (import sem source) ───
+
+    def test_handle_ts_import_no_source(self) -> None:
+        """_handle_import TS com source=None retorna sem crashar."""
+        from eizo.parser.typescript import TypeScriptParser
+
+        try:
+            parser = TypeScriptParser()
+        except RuntimeError:
+            pytest.skip("tree-sitter-typescript não instalado")
+
+        node = MagicMock()
+        node.child_by_field_name.return_value = None
+        parser._handle_import(node, b"", "test.ts", [], [], None)
+
+    # ─── parser/typescript.py: linha 306 (call sem function node) ───
+
+    def test_handle_ts_call_no_function(self) -> None:
+        """_handle_call TS com func_node=None retorna sem crashar."""
+        from eizo.parser.typescript import TypeScriptParser
+
+        try:
+            parser = TypeScriptParser()
+        except RuntimeError:
+            pytest.skip("tree-sitter-typescript não instalado")
+
+        node = MagicMock()
+        node.child_by_field_name.return_value = None
+        parser._handle_call(node, b"", "test.ts", [], [], None)
+
+    # ─── parser/typescript.py: linha 315 (call member_expression sem property) ───
+
+    def test_handle_ts_call_member_no_property(self) -> None:
+        """_handle_call TS com member_expression mas sem property."""
+        from eizo.parser.typescript import TypeScriptParser
+
+        try:
+            parser = TypeScriptParser()
+        except RuntimeError:
+            pytest.skip("tree-sitter-typescript não instalado")
+
+        func_node = MagicMock()
+        func_node.type = "member_expression"
+        func_node.child_by_field_name.return_value = None  # property field ausente
+        node = MagicMock()
+        node.child_by_field_name.return_value = func_node
+        parser._handle_call(node, b"", "test.ts", [], [], None)

@@ -1,0 +1,87 @@
+task: aumentar-cobertura-testes
+status: approved
+think:
+  problem: "A cobertura de testes do eizo está em 95% (870 stmts, 45 miss), acima do gate
+    de 70%. Porém mcp/server.py está em 31% (25 stmts não cobertas — _node_to_dict,
+    create_server e suas 5 tools, serve_mcp), o que representa risco real: as 5
+    ferramentas MCP expostas para agentes LLM (search_symbols, get_symbol_context,
+    trace_call_path, analyze_impact, get_architecture) nunca foram exercitadas por
+    testes. Objetivo: cobrir mcp/server.py e os gaps remanescentes nos parsers
+    (python 94%, ts 94%) e queries/impact.py (96%) para chegar a ~100%."
+  assumptions:
+    - "As 5 tools MCP são funções internas closures dentro de create_server; posso
+      testá-las extraindo o FastMCP retornado e chamando as tools via call_tool ou
+      introspecção do registro de tools"
+    - "_node_to_dict pode ser testada diretamente com um Node real (função module-level)"
+    - "serve_mcp pode ser testado com mock de mcp.run para evitar iniciar servidor real"
+    - "Os gaps de parser (linhas 23-24 ImportError fallback, 75-79/51-55 RuntimeError)
+      são defensivos e podem ser cobertos com mock de import ou pytest.skip quando
+      tree-sitter está instalado — linhas 23-24 só executam se import falha, difícil
+      de forçar sem manipulação de sys.modules"
+    - "queries/impact.py linhas 85/100 (atribuição de 'dependents' aninhados) exigem
+      cadeia de impacto com depth >= 2"
+  alternatives:
+    - "alt A: testar tools MCP via FastMCP.call_tool() com nomes de tool — descartado:
+      FastMCP pode não expor call_tool publicamente de forma estável em todas versões"
+    - "alt B: extrair as closures para funções module-level para testar diretamente —
+      descartado: muda arquitetura de produção só para testar, viola SIMPLIFY"
+    - "alt C: introspecção do registry de tools do FastMCP e chamada direta das funções
+      wrapper — escolhido: testa o caminho real (create_server registra tools, funções
+      executam queries reais contra GraphStore de teste) sem mudar código de produção"
+    - "alt D: não cobrir linhas 23-24 (ImportError fallback dos parsers) — aceito:
+      exigiria desinstalar tree-sitter, não vale o custo; focar no que é testável"
+  unknowns: |
+    RESOLVIDO:
+    1. Como FastMCP registra/expõe tools? → decorator @mcp.tool() registra no
+       _tool_manager; posso acessar via mcp._tool_manager._tools ou chamando
+       mcp.call_tool() se disponível. Investigarei a API real.
+    2. _node_to_dict é module-level? → sim, linha 20, pode ser importada e testada
+       diretamente com Node real.
+    3. gaps de parser linhas 23-24 e 75-79: são fallback defensivo (ImportError /
+       RuntimeError). Linhas 23-24 só rodam se tree-sitter-python não instalado.
+       Como tree-sitter está instalado, essas linhas são unreachable em teste normal.
+       Decisão: NÃO perseguir 100% literal; focar em mcp/server.py que é o ganho real.
+  answered: true
+simplify:
+  minimum_code: true
+  no_single_use_abstractions: true
+  no_speculative_config: true
+  notes: |
+    Diff: +215 linhas em 2 arquivos de teste + 1 arquivo novo (test_mcp_server.py,
+    ~270 linhas). Zero mudança em código de produção.
+    - _get_tool_fn: helper de teste reutilizada em 20+ testes MCP (não é uso único)
+    - populated_store: fixture reutilizada em ~18 testes MCP
+    - Testes de early-return defensivo seguem pattern já existente em test_coverage_gaps.py
+    - Sem abstrações especulativas, sem factory, sem parâmetros opcionais inventados
+surgical:
+  files:
+    - path: tests/test_mcp_server.py
+      necessary: true
+      reason: "Testa mcp/server.py (31% → 100%) — o gap principal da tarefa. Cobre _node_to_dict, create_server, 5 tools MCP e serve_mcp."
+    - path: tests/test_coverage_gaps.py
+      necessary: true
+      reason: "Adiciona testes para early-returns defensivos dos parsers: RuntimeError em __init__ (mock de LANGUAGE=None), handlers sem name_node/module_node/func_node."
+    - path: tests/test_queries_impact.py
+      necessary: true
+      reason: "Cobre linhas 85/100 de impact.py: dependents aninhados via inherits e calls com cadeia de depth >= 2."
+  removed_imports_clean: true
+  notes: |
+    Todos os 3 arquivos rastreiam direto ao objetivo "aumentar cobertura".
+    Zero mudança em código de produção — apenas testes.
+    Import órfão Path removido de test_mcp_server.py (não usado após refatoração
+    para usar fixture store em vez de tmp_path direto).
+verify:
+  ruff_clean: true
+  tests_pass: true
+  coverage_pct: 99.0
+  coverage_pass: true
+  success_criteria_met: true
+  notes: |
+    Antes: 95% (870 stmts, 45 miss, 160 testes)
+    Depois: 99% (870 stmts, 5 miss, 194 testes)
+    Ganho principal: mcp/server.py 31% → 100% (25 miss → 0)
+    Outros: queries/impact.py 96% → 100%, parsers 94% → 99%
+    5 linhas remanescentes são defensivas/estruturalmente unreachable:
+      - __main__.py:8 (if __name__ guard)
+      - parser/python.py:23-24 (ImportError fallback, tree-sitter instalado)
+      - parser/typescript.py:23-24 (ImportError fallback, tree-sitter instalado)
