@@ -186,6 +186,57 @@ class TestFindHotspots:
         assert results[0]["reference_count"] == 3
 
 
+# ─── Integração: parser + indexer reais (não fixtures idealizadas) ──
+#
+# analysis_store constrói arestas `caller → definição` diretamente, mas o
+# parser real produz `caller → call_site` (nó kind='call') que precisa ser
+# resolvido pelo nome. Estes testes indexam código Python real para garantir
+# que find_dead_code/find_hotspots funcionam contra a forma de grafo que a
+# produção realmente gera.
+
+
+class TestFindDeadCodeRealIndexer:
+    """Testa find_dead_code() contra grafo produzido pelo indexer real."""
+
+    def test_unused_function_is_dead(self, tmp_path: Path) -> None:
+        from eizo.indexer import index_repository
+
+        repo = Path(tmp_path)
+        (repo / "mod.py").write_text(
+            "def used():\n    return 1\n\n"
+            "def unused():\n    return 2\n\n"
+            "def caller():\n    return used()\n"
+        )
+        store = GraphStore(repo)
+        index_repository(repo, store, force=True)
+
+        names = {n.name for n in find_dead_code(store)}
+        assert "unused" in names
+        assert "used" not in names  # tem 1 caller real
+
+
+class TestFindHotspotsRealIndexer:
+    """Testa find_hotspots() contra grafo produzido pelo indexer real."""
+
+    def test_reference_count_matches_real_callers(self, tmp_path: Path) -> None:
+        from eizo.indexer import index_repository
+
+        repo = Path(tmp_path)
+        (repo / "mod.py").write_text(
+            "def used():\n    return 1\n\n"
+            "def caller_a():\n    return used()\n\n"
+            "def caller_b():\n    return used()\n"
+        )
+        store = GraphStore(repo)
+        index_repository(repo, store, force=True)
+
+        results = find_hotspots(store, min_references=1)
+        by_name = {r["node"].name: r["reference_count"] for r in results}
+        # 'used' tem exatamente 2 callers reais — não inflado por arestas
+        # estruturais 'contains' (que ligariam cada função ao arquivo).
+        assert by_name["used"] == 2
+
+
 # ─── CLI: eizo dead ─────────────────────────────────────────────
 
 
@@ -200,7 +251,7 @@ class TestCliDead:
         assert "Nenhum código morto" in result.output
 
     def test_dead_with_results(self, tmp_path: Path) -> None:
-        """Dead mostra código morto detectado."""
+        """Dead mostra código morto detectado, com JSON validando os nomes exatos."""
         from eizo.indexer import index_repository
 
         repo = Path(tmp_path)
@@ -213,12 +264,15 @@ class TestCliDead:
         index_repository(repo, store, force=True)
 
         runner = CliRunner()
-        result = runner.invoke(main, ["dead", "--path", str(repo)])
+        result = runner.invoke(
+            main, ["--format", "json", "dead", "--path", str(repo)]
+        )
         assert result.exit_code == 0
-        # caller e unused_func não têm callers; main e entrypoints são excluídos
-        # caller tem caller? não. Mas 'caller' não é entrypoint padrão.
-        # unused_func também não tem caller.
-        assert "Código morto" in result.output or "Nenhum código morto" in result.output
+        names = {n["name"] for n in json.loads(result.output)}
+        # caller e unused_func não têm ninguém que os chame.
+        assert names == {"caller", "unused_func"}
+        # used tem 1 caller (caller) — não deve ser dead code.
+        assert "used" not in names
 
     def test_dead_json_format(self, tmp_path: Path) -> None:
         """Dead com --format json retorna JSON."""

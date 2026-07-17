@@ -26,6 +26,50 @@ _DEFAULT_ENTRYPOINTS: frozenset[str] = frozenset({
 })
 
 
+def _real_referrers(store: GraphStore, node: Node) -> list[Node]:
+    """Encontra quem realmente referencia esta definição (calls/imports/inherits).
+
+    O parser cria arestas `contains` (arquivo/classe → membro) que não indicam
+    uso — apenas estrutura. Ele também cria arestas `caller → call_site` em vez
+    de `caller → definição` para chamadas. Por isso, referências reais precisam
+    resolver ambos os caminhos, igual a `trace.py`/`impact.py`:
+
+    - Caminho 1: arestas `calls`/`imports`/`inherits` diretas para esta definição.
+    - Caminho 2: nós `kind='call'` com o mesmo nome, subindo via `calls` até
+      quem fez a chamada.
+
+    Retorna a lista (deduplicada por id) de nós que referenciam `node`.
+    """
+    referrers: dict[str, Node] = {}
+
+    for kind in ("calls", "imports", "inherits"):
+        for edge in store.get_incoming_edges(node.id, kind=kind):
+            referrer = store.get_node(edge.source_id)
+            if referrer:
+                referrers[referrer.id] = referrer
+
+    call_sites = store.get_nodes_by_name(node.name, kind="call")
+    for call_site in call_sites:
+        if call_site.id == node.id:
+            continue
+        for edge in store.get_incoming_edges(call_site.id, kind="calls"):
+            referrer = store.get_node(edge.source_id)
+            if referrer:
+                referrers[referrer.id] = referrer
+
+    return list(referrers.values())
+
+
+def _definition_nodes(store: GraphStore) -> list[Node]:
+    """Retorna todos os nós de definição (function/method/class), sem stubs externos."""
+    rows = store.conn.execute(
+        "SELECT * FROM nodes WHERE kind IN ('function', 'method', 'class') "
+        "ORDER BY file_path, line_start"
+    ).fetchall()
+    nodes = [store._row_to_node(r) for r in rows]
+    return [n for n in nodes if not n.metadata.get("external")]
+
+
 def find_dead_code(
     store: GraphStore,
     entrypoints: frozenset[str] | None = None,
@@ -35,7 +79,7 @@ def find_dead_code(
 
     Um símbolo é considerado "dead" se:
     - É uma definição (function, method, class)
-    - Não tem arestas incoming (calls, imports, inherits)
+    - Ninguém realmente o chama, importa ou herda dele (ver `_real_referrers`)
     - Seu nome não está na lista de entrypoints conhecidos
 
     Args:
@@ -50,39 +94,17 @@ def find_dead_code(
     if entrypoints is None:
         entrypoints = _DEFAULT_ENTRYPOINTS
 
-    # Busca todas as definições que não têm nenhuma aresta incoming.
-    # Uma aresta incoming significa que alguém chama, importa ou herda este símbolo.
-    sql = """
-        SELECT n.* FROM nodes n
-        WHERE n.kind IN ('function', 'method', 'class')
-          AND n.id NOT IN (SELECT DISTINCT target_id FROM edges)
-          AND n.name NOT IN ({placeholders})
-        ORDER BY n.file_path, n.line_start
-        LIMIT ?
-    """
+    dead: list[Node] = []
+    for node in _definition_nodes(store):
+        if node.name in entrypoints:
+            continue
+        if _real_referrers(store, node):
+            continue
+        dead.append(node)
+        if len(dead) >= limit:
+            break
 
-    # Constrói placeholders dinamicamente para a lista de entrypoints
-    eps = list(entrypoints)
-    if eps:
-        placeholders = ",".join("?" * len(eps))
-        sql = sql.format(placeholders=placeholders)
-        params: list[Any] = eps + [limit]
-    else:
-        # Sem entrypoints — query sem filtro de nome
-        sql = """
-            SELECT n.* FROM nodes n
-            WHERE n.kind IN ('function', 'method', 'class')
-              AND n.id NOT IN (SELECT DISTINCT target_id FROM edges)
-            ORDER BY n.file_path, n.line_start
-            LIMIT ?
-        """
-        params = [limit]
-
-    rows = store.conn.execute(sql, params).fetchall()
-    # Filtra nós stub externos (metadata.external = True) — não são dead code,
-    # são referências a símbolos de fora do repo.
-    nodes = [store._row_to_node(r) for r in rows]
-    return [n for n in nodes if not n.metadata.get("external")]
+    return dead
 
 
 def find_hotspots(
@@ -92,9 +114,9 @@ def find_hotspots(
 ) -> list[dict[str, Any]]:
     """Encontra símbolos mais referenciados (hotspots).
 
-    Conta o in-degree (número de arestas incoming) para cada nó de definição.
-    Símbolos com muitas referências são pontos críticos — mudanças neles
-    têm alto impacto.
+    Conta referências reais (calls/imports/inherits, resolvendo call sites —
+    ver `_real_referrers`) para cada nó de definição. Símbolos com muitas
+    referências são pontos críticos — mudanças neles têm alto impacto.
 
     Args:
         store: GraphStore com o grafo.
@@ -105,22 +127,11 @@ def find_hotspots(
         Lista de dicts com 'node' (Node) e 'reference_count' (int),
         ordenada por reference_count descendente.
     """
-    sql = """
-        SELECT n.*, COUNT(e.source_id) as ref_count
-        FROM nodes n
-        JOIN edges e ON e.target_id = n.id
-        WHERE n.kind IN ('function', 'method', 'class')
-        GROUP BY n.id
-        HAVING ref_count >= ?
-        ORDER BY ref_count DESC, n.name
-        LIMIT ?
-    """
-
-    rows = store.conn.execute(sql, [min_references, limit]).fetchall()
     results: list[dict[str, Any]] = []
-    for r in rows:
-        node = store._row_to_node(r)
-        ref_count = r["ref_count"]
-        results.append({"node": node, "reference_count": ref_count})
+    for node in _definition_nodes(store):
+        ref_count = len(_real_referrers(store, node))
+        if ref_count >= min_references:
+            results.append({"node": node, "reference_count": ref_count})
 
-    return results
+    results.sort(key=lambda r: (-r["reference_count"], r["node"].name))
+    return results[:limit]
