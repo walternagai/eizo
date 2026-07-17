@@ -162,6 +162,14 @@
     })
     .onNodeClick(node => showInfoPanel(node));
 
+  // A biblioteca dimensiona o canvas uma única vez ao montar (a partir do
+  // tamanho do container no momento), sem escutar resize da janela. Sem
+  // isso, redimensionar/maximizar o browser deixa o grafo menor que a janela.
+  window.addEventListener('resize', () => {
+    Graph.width(window.innerWidth);
+    Graph.height(window.innerHeight);
+  });
+
   function showInfoPanel(node) {
     const panel = document.getElementById('info-panel');
     const content = document.getElementById('info-content');
