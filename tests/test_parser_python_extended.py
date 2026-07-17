@@ -79,22 +79,44 @@ def():
         assert len(nodes) >= 1
 
     def test_parse_import_from_with_alias(self, parser: PythonParser) -> None:
-        """Import from com alias."""
+        """Import from com alias: resolve pelo nome real (path), não pelo
+        alias local (osp), já que é 'path' que existe no grafo."""
         source = """
 from os import path as osp
 """
         nodes, edges = parser.parse_file(Path("main.py"), source)
-        imports = [n for n in nodes if n.kind == "import"]
-        assert len(imports) >= 1
+        import_names = {n.name for n in nodes if n.kind == "import"}
+        assert import_names == {"os.path"}
+
+    def test_parse_import_from_single_name(self, parser: PythonParser) -> None:
+        """'from X import Y' com um único símbolo (sem vírgula) deve ser
+        extraído — o nó AST retornado por child_by_field_name('name') para
+        esse caso é o próprio dotted_name, não um container com filhos
+        dotted_name, o que quebrava a extração antes da correção."""
+        source = """
+from config import get_config
+"""
+        nodes, edges = parser.parse_file(Path("main.py"), source)
+        import_names = {n.name for n in nodes if n.kind == "import"}
+        assert import_names == {"config.get_config"}
+
+    def test_parse_import_from_parenthesized(self, parser: PythonParser) -> None:
+        """'from X import (A, B)' com parênteses deve extrair ambos."""
+        source = """
+from config import (get_config, other_thing)
+"""
+        nodes, edges = parser.parse_file(Path("main.py"), source)
+        import_names = {n.name for n in nodes if n.kind == "import"}
+        assert import_names == {"config.get_config", "config.other_thing"}
 
     def test_parse_multiple_imports(self, parser: PythonParser) -> None:
-        """Múltiplos imports."""
+        """Múltiplos imports (import os, sys, json — sem 'from')."""
         source = """
 import os, sys, json
 """
         nodes, edges = parser.parse_file(Path("main.py"), source)
-        imports = [n for n in nodes if n.kind == "import"]
-        assert len(imports) >= 1
+        import_names = {n.name for n in nodes if n.kind == "import"}
+        assert import_names == {"os", "sys", "json"}
 
     def test_parse_method_call(self, parser: PythonParser) -> None:
         """Chamada de método (obj.method()) deve extrair o nome do método."""

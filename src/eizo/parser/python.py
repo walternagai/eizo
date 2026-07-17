@@ -305,27 +305,41 @@ class PythonParser(BaseParser):
             return
 
         module_name = _get_text(source, module_node)
-        names = node.child_by_field_name("name")
-        if names:
-            for name_node in names.children:
-                if name_node.type == "dotted_name":
-                    name = _get_text(source, name_node)
-                    import_node = Node(
-                        id=_node_id(f"import:{module_name}.{name}", file_path, name_node.start_point[0] + 1),
-                        name=f"{module_name}.{name}",
-                        kind="import",
-                        file_path=file_path,
-                        language="python",
-                        line_start=name_node.start_point[0] + 1,
-                        line_end=name_node.end_point[0] + 1,
-                    )
-                    nodes.append(import_node)
-                    if parent_id:
-                        edges.append(Edge(
-                            source_id=parent_id,
-                            target_id=import_node.id,
-                            kind="imports",
-                        ))
+        # 'name' é um campo repetido (um por símbolo importado) — para
+        # pegar todos é preciso `children_by_field_name`, não
+        # `child_by_field_name` (que retorna só a primeira ocorrência, o
+        # que faz `from x import a, b` perder `b`, e `from x import a`
+        # sozinho também falha porque o nó retornado é o próprio
+        # dotted_name, não um container com `.children` do tipo certo).
+        for name_field_node in node.children_by_field_name("name"):
+            if name_field_node.type == "dotted_name":
+                dotted_node = name_field_node
+            elif name_field_node.type == "aliased_import":
+                # 'from x import y as z' — resolve pelo nome real (y), não
+                # pelo alias local (z), já que é y que existe no grafo.
+                dotted_node = name_field_node.child_by_field_name("name")
+                if dotted_node is None:
+                    continue
+            else:
+                continue
+
+            name = _get_text(source, dotted_node)
+            import_node = Node(
+                id=_node_id(f"import:{module_name}.{name}", file_path, dotted_node.start_point[0] + 1),
+                name=f"{module_name}.{name}",
+                kind="import",
+                file_path=file_path,
+                language="python",
+                line_start=dotted_node.start_point[0] + 1,
+                line_end=dotted_node.end_point[0] + 1,
+            )
+            nodes.append(import_node)
+            if parent_id:
+                edges.append(Edge(
+                    source_id=parent_id,
+                    target_id=import_node.id,
+                    kind="imports",
+                ))
 
     def _handle_call(
         self,

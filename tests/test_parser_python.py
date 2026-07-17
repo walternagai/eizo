@@ -72,14 +72,15 @@ class Derived(Base):
         assert len(inherits) >= 1
 
     def test_parse_imports(self, parser: PythonParser) -> None:
-        """Deve extrair imports."""
+        """Deve extrair imports, incluindo todos os símbolos de um
+        'from X import A, B' (não só o primeiro)."""
         source = """
 import os
 from typing import Optional, List
 """
         nodes, edges = parser.parse_file(Path("main.py"), source)
-        imports = [n for n in nodes if n.kind == "import"]
-        assert len(imports) >= 1
+        import_names = {n.name for n in nodes if n.kind == "import"}
+        assert import_names == {"os", "typing.Optional", "typing.List"}
 
     def test_parse_calls(self, parser: PythonParser) -> None:
         """Deve extrair chamadas de função."""
