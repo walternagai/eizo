@@ -35,12 +35,13 @@ def _get_text(source: bytes, node: Any) -> str:
     return source[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
 
 
-def _arrow_function_name(node: Any, source: bytes) -> tuple[str | None, str]:
-    """Tenta extrair um nome para uma arrow function a partir do nó pai.
+def _infer_name_from_parent(node: Any, source: bytes) -> tuple[str | None, str]:
+    """Tenta extrair um nome para uma função anônima na AST (arrow function
+    ou function expression sem nome próprio) a partir do nó pai.
 
     Retorna (nome, kind): kind='method' para propriedades de objeto/classe,
-    'function' para atribuição a variável. (None, "function") se anônima
-    (ex: callback passado inline como argumento).
+    'function' para atribuição a variável. (None, "function") se não há
+    como nomear (ex: callback passado inline como argumento).
     """
     parent = node.parent
     if parent is None:
@@ -55,7 +56,9 @@ def _arrow_function_name(node: Any, source: bytes) -> tuple[str | None, str]:
 
     if parent.type == "pair" and parent.child_by_field_name("value") == node:
         key_node = parent.child_by_field_name("key")
-        if key_node is not None:
+        # Chave computada (`{ [expr]: () => ... }`) não tem um nome estático
+        # útil — tratamos como anônima em vez de usar o texto da expressão.
+        if key_node is not None and key_node.type != "computed_property_name":
             return _get_text(source, key_node), "method"
 
     if parent.type == "public_field_definition" and parent.child_by_field_name("value") == node:
@@ -136,8 +139,8 @@ class TypeScriptParser(BaseParser):
             self._handle_method(node, source, file_path, nodes, edges, parent_id)
         elif node_type in ("class_declaration", "class"):
             self._handle_class(node, source, file_path, nodes, edges, parent_id)
-        elif node_type in ("arrow_function",):
-            self._handle_arrow_function(node, source, file_path, nodes, edges, parent_id)
+        elif node_type in ("arrow_function", "function_expression"):
+            self._handle_function_like(node, source, file_path, nodes, edges, parent_id)
         elif node_type in ("import_statement", "import"):
             self._handle_import(node, source, file_path, nodes, edges, parent_id)
         elif node_type == "call_expression":
@@ -238,7 +241,7 @@ class TypeScriptParser(BaseParser):
         for child in node.children:
             self._walk_tree(child, source, file_path, nodes, edges, method_node.id)
 
-    def _handle_arrow_function(
+    def _handle_function_like(
         self,
         node: Any,
         source: bytes,
@@ -247,16 +250,24 @@ class TypeScriptParser(BaseParser):
         edges: list[Edge],
         parent_id: str | None,
     ) -> None:
-        """Extrai uma arrow function.
+        """Extrai uma arrow function ou function expression.
 
-        Arrow functions são anônimas na AST — só ganham nome quando atribuídas
-        a uma variável (`const foo = () => ...`) ou usadas como propriedade de
-        objeto/classe (`{ method: () => ... }`, `method = () => ...`). Nesses
-        casos tratamos como uma definição nomeada. Caso contrário (ex: callback
-        inline como `useEffect(() => ...)`), continuamos a recursão no corpo
-        mantendo o escopo do chamador, para não perder as chamadas internas.
+        Ambas podem ser anônimas na AST. Function expressions podem ter seu
+        próprio nome (`function foo() {}`) — usamos direto quando presente.
+        Caso contrário (incluindo todas as arrow functions, que nunca têm
+        nome próprio), tentamos nomear a partir do nó pai: atribuição a
+        variável (`const foo = () => ...` / `= function() {}`), propriedade
+        de objeto/classe (`{ method: () => ... }`, `method = () => ...`).
+        Sem nome algum (ex: callback inline como `useEffect(() => ...)`),
+        continuamos a recursão no corpo mantendo o escopo do chamador, para
+        não perder as chamadas internas.
         """
-        name, kind = _arrow_function_name(node, source)
+        own_name_node = node.child_by_field_name("name")
+        if own_name_node is not None:
+            name: str | None = _get_text(source, own_name_node)
+            kind = "function"
+        else:
+            name, kind = _infer_name_from_parent(node, source)
 
         next_parent_id = parent_id
         if name:

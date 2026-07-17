@@ -104,6 +104,65 @@ function caller() {
         call_names = {n.name for n in nodes if n.kind == "call"}
         assert call_names == {"process", "transform", "fetch"}
 
+    def test_parse_function_expression_named_via_const(self, parser: TypeScriptParser) -> None:
+        """function expression atribuída a const (`const foo = function(){}`)
+        deve ser extraída como function, com chamadas internas capturadas."""
+        source = """
+const foo = function() {
+    bar();
+};
+"""
+        nodes, edges = parser.parse_file(Path("main.ts"), source)
+        funcs = [n for n in nodes if n.kind == "function"]
+        assert len(funcs) == 1
+        assert funcs[0].name == "foo"
+        call_names = {n.name for n in nodes if n.kind == "call"}
+        assert "bar" in call_names
+
+    def test_parse_function_expression_own_name(self, parser: TypeScriptParser) -> None:
+        """function expression com nome próprio (`function namedFn(){}`)
+        usa esse nome diretamente, mesmo sem atribuição a variável."""
+        source = """
+arr.forEach(function namedFn() {
+    baz();
+});
+"""
+        nodes, edges = parser.parse_file(Path("main.ts"), source)
+        funcs = [n for n in nodes if n.kind == "function"]
+        assert len(funcs) == 1
+        assert funcs[0].name == "namedFn"
+        call_names = {n.name for n in nodes if n.kind == "call"}
+        assert {"forEach", "baz"} <= call_names
+
+    def test_parse_function_expression_anonymous_callback(self, parser: TypeScriptParser) -> None:
+        """function expression anônima (callback inline) não vira nó nomeado,
+        mas chamadas internas ainda são capturadas."""
+        source = """
+arr.forEach(function() {
+    qux();
+});
+"""
+        nodes, edges = parser.parse_file(Path("main.ts"), source)
+        assert not any(n.kind in ("function", "method") for n in nodes)
+        call_names = {n.name for n in nodes if n.kind == "call"}
+        assert {"forEach", "qux"} <= call_names
+
+    def test_parse_arrow_function_computed_key_stays_anonymous(
+        self, parser: TypeScriptParser
+    ) -> None:
+        """Arrow function como valor de chave computada (`{ [expr]: () => {} }`)
+        não deve virar um nó nomeado com o texto literal da expressão."""
+        source = """
+const key = "handler";
+const obj = {
+    [key]: () => { process(); }
+};
+"""
+        nodes, edges = parser.parse_file(Path("main.ts"), source)
+        assert not any(n.kind in ("function", "method") for n in nodes)
+        call_names = {n.name for n in nodes if n.kind == "call"}
+        assert "process" in call_names
+
     def test_parse_interface(self, parser: TypeScriptParser) -> None:
         """Interface não deve crashar."""
         source = """
