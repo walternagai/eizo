@@ -172,19 +172,19 @@ def export_mermaid(
             safe_id = _mermaid_safe_id(c.id)
             lines.append(f"  class {safe_id} {{")
             lines.append(f'    %% {c.name}')
-            lines.append("  }}")
+            lines.append("  }")
 
         for m in methods:
             safe_id = _mermaid_safe_id(m.id)
             lines.append(f"  class {safe_id} {{")
             lines.append(f'    %% {m.name}()')
-            lines.append("  }}")
+            lines.append("  }")
 
         for f in functions:
             safe_id = _mermaid_safe_id(f.id)
             lines.append(f"  class {safe_id} {{")
             lines.append(f'    %% {f.name}()')
-            lines.append("  }}")
+            lines.append("  }")
 
         # Arestas
         kind_map = {

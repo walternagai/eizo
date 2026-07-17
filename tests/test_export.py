@@ -175,6 +175,16 @@ class TestExportMermaid:
         result = export_mermaid(export_store, diagram_type="classDiagram")
         assert "--|>" in result
 
+    def test_mermaid_class_diagram_braces_balanced(self, export_store: GraphStore) -> None:
+        """Cada bloco 'class X {' deve fechar com uma única '}' (não '}}')."""
+        result = export_mermaid(export_store, diagram_type="classDiagram")
+        lines = result.splitlines()
+        assert "}}" not in result
+        opens = sum(1 for line in lines if line.strip().endswith("{"))
+        closes = sum(1 for line in lines if line.strip() == "}")
+        assert opens > 0
+        assert opens == closes
+
     def test_mermaid_kind_filter(self, export_store: GraphStore) -> None:
         """Filtro de kind limita nós."""
         result = export_mermaid(export_store, kind="class")
