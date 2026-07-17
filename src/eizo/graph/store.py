@@ -7,7 +7,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from eizo.graph.models import Edge, GraphStats, Node
+from eizo.graph.models import DEFINITION_KINDS, Edge, GraphStats, Node
 from eizo.graph.schema import ensure_db_dir, open_db
 
 
@@ -315,6 +315,63 @@ class GraphStore:
             params.append(kind)
         rows = self.conn.execute(sql, params).fetchall()
         return [self._row_to_edge(r) for r in rows]
+
+    # ─── Resolução de call sites ──────────────────────────────────
+    #
+    # O parser cria arestas caller → call_site (nó kind='call') em vez de
+    # caller → definição para chamadas. Estes helpers resolvem esse padrão
+    # de forma centralizada, para não reimplementar a mesma lógica em cada
+    # query module (trace, impact, analysis).
+
+    def resolve_call_to_definition(self, call_node: Node) -> Node:
+        """Dado um nó kind='call', tenta achar a definição com mesmo nome.
+
+        Retorna o próprio call_node se não houver definição correspondente
+        (preserva informação — ex: chamadas a símbolos externos ao repo).
+        """
+        for candidate in self.get_nodes_by_name(call_node.name):
+            if candidate.kind in DEFINITION_KINDS:
+                return candidate
+        return call_node
+
+    def get_real_references(self, node_id: str, node_name: str) -> list[tuple[Node, str]]:
+        """Retorna (nó_referenciador, kind) para cada referência real a um nó.
+
+        Arestas `contains` (arquivo/classe → membro) são puramente
+        estruturais e não indicam uso, por isso são ignoradas. Resolve dois
+        caminhos para achar referências reais:
+
+        - Arestas `calls`/`imports`/`inherits` diretas para o nó.
+        - Nós kind='call' com o mesmo nome (call sites), subindo via aresta
+          `calls` até quem fez a chamada.
+
+        Deduplica por (referrer.id, kind): o mesmo caller pode aparecer via
+        ambos os caminhos de `calls`, mas não deve ser contado duas vezes.
+        """
+        seen: set[tuple[str, str]] = set()
+        results: list[tuple[Node, str]] = []
+
+        def _add(referrer: Node, kind: str) -> None:
+            key = (referrer.id, kind)
+            if key not in seen:
+                seen.add(key)
+                results.append((referrer, kind))
+
+        for kind in ("calls", "imports", "inherits"):
+            for edge in self.get_incoming_edges(node_id, kind=kind):
+                referrer = self.get_node(edge.source_id)
+                if referrer:
+                    _add(referrer, kind)
+
+        for call_site in self.get_nodes_by_name(node_name, kind="call"):
+            if call_site.id == node_id:
+                continue
+            for edge in self.get_incoming_edges(call_site.id, kind="calls"):
+                referrer = self.get_node(edge.source_id)
+                if referrer:
+                    _add(referrer, "calls")
+
+        return results
 
     # ─── Stats ─────────────────────────────────────────────────
 

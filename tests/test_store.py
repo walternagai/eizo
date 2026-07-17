@@ -169,6 +169,72 @@ class TestGraphStore:
         assert stats.by_kind["class"] == 1
         assert stats.total_files == 2
 
+    def test_resolve_call_to_definition_finds_definition(self, store) -> None:
+        """resolve_call_to_definition acha a definição com mesmo nome."""
+        store.upsert_nodes([
+            Node(id="defn", name="helper", kind="function", file_path="lib.py", language="python"),
+            Node(id="call_site", name="helper", kind="call", file_path="app.py", language="python"),
+        ])
+        call_node = store.get_node("call_site")
+        resolved = store.resolve_call_to_definition(call_node)
+        assert resolved.id == "defn"
+        assert resolved.kind == "function"
+
+    def test_resolve_call_to_definition_falls_back_to_call_site(self, store) -> None:
+        """Sem definição correspondente, retorna o próprio call site."""
+        store.upsert_node(
+            Node(id="call_site", name="external_func", kind="call", file_path="app.py", language="python")
+        )
+        call_node = store.get_node("call_site")
+        resolved = store.resolve_call_to_definition(call_node)
+        assert resolved.id == "call_site"
+
+    def test_get_real_references_direct_edges(self, store) -> None:
+        """get_real_references resolve arestas diretas calls/imports/inherits."""
+        store.upsert_nodes([
+            Node(id="target", name="target", kind="function", file_path="t.py", language="python"),
+            Node(id="caller", name="caller", kind="function", file_path="c.py", language="python"),
+            Node(id="importer", name="importer", kind="function", file_path="i.py", language="python"),
+        ])
+        store.upsert_edges([
+            Edge(source_id="caller", target_id="target", kind="calls"),
+            Edge(source_id="importer", target_id="target", kind="imports"),
+        ])
+
+        refs = store.get_real_references("target", "target")
+        by_id = {n.id: kind for n, kind in refs}
+        assert by_id == {"caller": "calls", "importer": "imports"}
+
+    def test_get_real_references_resolves_call_sites(self, store) -> None:
+        """get_real_references resolve caller → call_site → definição (mesmo nome)."""
+        store.upsert_nodes([
+            Node(id="defn", name="helper", kind="function", file_path="lib.py", language="python"),
+            Node(id="call_site", name="helper", kind="call", file_path="app.py", language="python"),
+            Node(id="caller", name="caller", kind="function", file_path="app.py", language="python"),
+        ])
+        store.upsert_edges([
+            Edge(source_id="caller", target_id="call_site", kind="calls"),
+        ])
+
+        refs = store.get_real_references("defn", "helper")
+        assert refs == [(store.get_node("caller"), "calls")]
+
+    def test_get_real_references_dedupes_direct_and_call_site(self, store) -> None:
+        """Mesmo caller via aresta direta e via call site não deve duplicar."""
+        store.upsert_nodes([
+            Node(id="defn", name="helper", kind="function", file_path="lib.py", language="python"),
+            Node(id="call_site", name="helper", kind="call", file_path="app.py", language="python"),
+            Node(id="caller", name="caller", kind="function", file_path="app.py", language="python"),
+        ])
+        store.upsert_edges([
+            Edge(source_id="caller", target_id="defn", kind="calls"),
+            Edge(source_id="caller", target_id="call_site", kind="calls"),
+        ])
+
+        refs = store.get_real_references("defn", "helper")
+        assert len(refs) == 1
+        assert refs[0][0].id == "caller"
+
     def test_clear_all(self, store) -> None:
         """Limpa todo o grafo."""
         store.upsert_node(Node(id="a1", name="foo", kind="function", file_path="a.py", language="python"))

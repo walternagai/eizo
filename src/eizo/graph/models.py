@@ -5,6 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+# Kinds de nós que representam definições de símbolos (não call sites,
+# imports, ou arquivos). Usado por queries para distinguir definições de
+# referências a elas.
+DEFINITION_KINDS: frozenset[str] = frozenset({"function", "method", "class"})
+
 
 @dataclass(frozen=True)
 class Node:

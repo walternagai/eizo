@@ -12,11 +12,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from eizo.graph.models import Node
+from eizo.graph.models import DEFINITION_KINDS, Node
 from eizo.graph.store import GraphStore
-
-# Kinds que representam definições de símbolos — candidatos a dead code.
-_DEFINITION_KINDS: frozenset[str] = frozenset({"function", "method", "class"})
 
 # Nomes que são tipicamente entrypoints e não devem ser marcados como dead code
 # mesmo sem callers explícitos no grafo.
@@ -29,42 +26,26 @@ _DEFAULT_ENTRYPOINTS: frozenset[str] = frozenset({
 def _real_referrers(store: GraphStore, node: Node) -> list[Node]:
     """Encontra quem realmente referencia esta definição (calls/imports/inherits).
 
-    O parser cria arestas `contains` (arquivo/classe → membro) que não indicam
-    uso — apenas estrutura. Ele também cria arestas `caller → call_site` em vez
-    de `caller → definição` para chamadas. Por isso, referências reais precisam
-    resolver ambos os caminhos, igual a `trace.py`/`impact.py`:
+    Delega a `store.get_real_references`, que resolve o padrão
+    caller → call_site → definição usado pelo parser (ver `trace.py`/
+    `impact.py`, que resolvem o mesmo padrão para os respectivos casos de uso).
 
-    - Caminho 1: arestas `calls`/`imports`/`inherits` diretas para esta definição.
-    - Caminho 2: nós `kind='call'` com o mesmo nome, subindo via `calls` até
-      quem fez a chamada.
-
-    Retorna a lista (deduplicada por id) de nós que referenciam `node`.
+    Deduplica por id (não por (id, kind)): um caller que tanto importa quanto
+    chama `node` deve contar como uma única referência para dead code/hotspots.
     """
-    referrers: dict[str, Node] = {}
-
-    for kind in ("calls", "imports", "inherits"):
-        for edge in store.get_incoming_edges(node.id, kind=kind):
-            referrer = store.get_node(edge.source_id)
-            if referrer:
-                referrers[referrer.id] = referrer
-
-    call_sites = store.get_nodes_by_name(node.name, kind="call")
-    for call_site in call_sites:
-        if call_site.id == node.id:
-            continue
-        for edge in store.get_incoming_edges(call_site.id, kind="calls"):
-            referrer = store.get_node(edge.source_id)
-            if referrer:
-                referrers[referrer.id] = referrer
-
-    return list(referrers.values())
+    seen: dict[str, Node] = {}
+    for referrer, _kind in store.get_real_references(node.id, node.name):
+        seen[referrer.id] = referrer
+    return list(seen.values())
 
 
 def _definition_nodes(store: GraphStore) -> list[Node]:
     """Retorna todos os nós de definição (function/method/class), sem stubs externos."""
+    placeholders = ",".join("?" for _ in DEFINITION_KINDS)
     rows = store.conn.execute(
-        "SELECT * FROM nodes WHERE kind IN ('function', 'method', 'class') "
-        "ORDER BY file_path, line_start"
+        f"SELECT * FROM nodes WHERE kind IN ({placeholders}) "
+        "ORDER BY file_path, line_start",
+        tuple(DEFINITION_KINDS),
     ).fetchall()
     nodes = [store._row_to_node(r) for r in rows]
     return [n for n in nodes if not n.metadata.get("external")]

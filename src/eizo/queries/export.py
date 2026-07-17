@@ -15,9 +15,6 @@ from typing import Any
 from eizo.graph.models import Edge, Node
 from eizo.graph.store import GraphStore
 
-# Kinds de nós que representam definições (incluídos por padrão no export).
-_DEFINITION_KINDS: frozenset[str] = frozenset({"function", "method", "class"})
-
 
 def _fetch_nodes(
     store: GraphStore,

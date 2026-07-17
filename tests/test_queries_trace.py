@@ -46,6 +46,23 @@ class TestTraceQueries:
         assert result["symbol"] is not None
         assert len(result["callers"]) == 2
 
+    def test_trace_incoming_excludes_non_call_references(self, store) -> None:
+        """Trace incoming só considera relação 'calls' — imports não contam
+        como caller (get_real_references retorna outras kinds também)."""
+        store.upsert_nodes([
+            Node(id="importer", name="importer", kind="function", file_path="a.py", language="python"),
+            Node(id="caller", name="caller", kind="function", file_path="b.py", language="python"),
+            Node(id="callee", name="callee", kind="function", file_path="c.py", language="python"),
+        ])
+        store.upsert_edges([
+            Edge(source_id="importer", target_id="callee", kind="imports"),
+            Edge(source_id="caller", target_id="callee", kind="calls"),
+        ])
+
+        result = trace_call_path(store, "callee", direction="incoming")
+        callers = {c["node"].name for c in result["callers"]}
+        assert callers == {"caller"}
+
     def test_trace_call_path_both(self, store) -> None:
         """Traça ambas as direções."""
         store.upsert_nodes([
