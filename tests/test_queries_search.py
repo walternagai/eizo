@@ -31,6 +31,32 @@ class TestSearchQueries:
         assert len(results) == 1
         assert results[0].language == "python"
 
+    def test_search_symbols_full_text_matches_docstring(self, store) -> None:
+        """full_text=True busca em docstring/code_snippet, não só no nome."""
+        store.upsert_nodes([
+            Node(
+                id="a1", name="process", kind="function", file_path="a.py", language="python",
+                docstring="Valida um pagamento antes de processar.",
+            ),
+            Node(id="a2", name="other", kind="function", file_path="b.py", language="python"),
+        ])
+
+        # LIKE por nome não encontra "pagamento" (não está no nome).
+        assert search_symbols(store, "pagamento") == []
+
+        results = search_symbols(store, "pagamento", full_text=True)
+        assert len(results) == 1
+        assert results[0].id == "a1"
+
+    def test_search_symbols_full_text_default_off(self, store) -> None:
+        """Sem full_text, comportamento é o de busca por nome (LIKE) como antes."""
+        store.upsert_nodes([
+            Node(id="a1", name="get_user", kind="function", file_path="a.py", language="python"),
+        ])
+        results = search_symbols(store, "get")
+        assert len(results) == 1
+        assert results[0].id == "a1"
+
     def test_get_symbol_context(self, store) -> None:
         """Contexto de símbolo com vizinhança."""
         store.upsert_nodes([

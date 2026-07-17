@@ -165,6 +165,21 @@ class TestCreateServer:
         parsed = json.loads(result)
         assert parsed == []
 
+    def test_search_symbols_full_text_matches_docstring(self, populated_store: GraphStore) -> None:
+        """full_text=True busca em docstring, não só no nome."""
+        mcp = create_server(populated_store, port=12345)
+        fn = _get_tool_fn(mcp, "search_symbols")
+
+        # "Núcleo" está na docstring de 'core', não no nome — busca por
+        # nome (padrão) não encontra.
+        no_fts = fn(query="Núcleo")
+        assert json.loads(no_fts) == []
+
+        result = fn(query="Núcleo", full_text=True)
+        parsed = json.loads(result)
+        assert len(parsed) == 1
+        assert parsed[0]["name"] == "core"
+
     # ─── get_symbol_context ───
 
     def test_get_symbol_context(self, populated_store: GraphStore) -> None:

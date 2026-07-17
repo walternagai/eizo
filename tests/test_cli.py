@@ -79,6 +79,27 @@ class TestCliSearch:
         assert "foo" in result.output
 
 
+    def test_search_full_text_finds_by_docstring(self, tmp_path: Path) -> None:
+        """--full-text busca em docstring, não só no nome."""
+        repo = Path(tmp_path)
+        (repo / "test.py").write_text(
+            'def process():\n    """Valida um pagamento antes de processar."""\n    pass\n'
+        )
+        store = GraphStore(repo)
+        index_repository(repo, store)
+
+        runner = CliRunner()
+        # Sem --full-text, "pagamento" não bate com o nome "process".
+        no_fts = runner.invoke(main, ["search", "pagamento", "--path", str(repo)])
+        assert "Nenhum resultado" in no_fts.output
+
+        result = runner.invoke(
+            main, ["search", "pagamento", "--full-text", "--path", str(repo)]
+        )
+        assert result.exit_code == 0
+        assert "process" in result.output
+
+
 class TestCliTrace:
     """Testes para o comando 'eizo trace'."""
 

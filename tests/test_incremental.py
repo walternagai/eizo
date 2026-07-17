@@ -197,6 +197,16 @@ class TestFtsSearch:
         assert len(results) == 1
         assert results[0].language == "typescript"
 
+    def test_fts_search_stray_quote_does_not_raise(self, store: GraphStore) -> None:
+        """Query com aspa solta (sem AND/OR/NOT/*) não deve quebrar o MATCH."""
+        store.upsert_nodes([
+            Node(id="a1", name="foo", kind="function", file_path="a.py", language="python"),
+        ])
+        # Antes da correção, uma aspa desbalanceada era passada crua para o
+        # FTS5 MATCH e lançava sqlite3.OperationalError.
+        results = store.search_nodes_fts('foo"bar')
+        assert results == []
+
     def test_fts_search_no_results(self, store: GraphStore) -> None:
         """Busca FTS5 sem matches retorna lista vazia."""
         store.upsert_nodes([

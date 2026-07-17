@@ -17,6 +17,15 @@ from eizo.queries import search as search_q
 from eizo.queries import trace as trace_q
 from eizo.queries.analysis import find_dead_code, find_hotspots
 
+# Teto de segurança para parâmetros `limit` das tools — evita que um cliente
+# MCP peça um resultset arbitrariamente grande (ex: limit=1_000_000).
+_MAX_LIMIT = 500
+
+
+def _clamp_limit(limit: int) -> int:
+    """Restringe `limit` ao intervalo [1, _MAX_LIMIT]."""
+    return max(1, min(limit, _MAX_LIMIT))
+
 
 def _node_to_dict(node: Any) -> dict[str, Any]:
     """Converte um Node para dict serializável."""
@@ -43,16 +52,23 @@ def create_server(store: GraphStore, port: int = 8765) -> FastMCP:
         kind: str | None = None,
         language: str | None = None,
         limit: int = 20,
+        full_text: bool = False,
     ) -> str:
-        """Busca símbolos no grafo de conhecimento por nome.
+        """Busca símbolos no grafo de conhecimento.
 
         Args:
             query: Nome ou padrão de busca.
             kind: Filtrar por tipo (function, class, method, import).
             language: Filtrar por linguagem (python, typescript).
             limit: Limite de resultados (padrão: 20).
+            full_text: Se True, busca full-text (FTS5) sobre nome + docstring
+                + code_snippet, ranqueada por relevância — útil para buscar
+                por conteúdo mencionado em docstrings/código. Padrão (False)
+                busca por substring no nome, que cobre camelCase e snake_case.
         """
-        results = search_q.search_symbols(store, query, kind=kind, language=language, limit=limit)
+        results = search_q.search_symbols(
+            store, query, kind=kind, language=language, limit=_clamp_limit(limit), full_text=full_text
+        )
         return json.dumps([_node_to_dict(n) for n in results], indent=2, default=str)
 
     @mcp.tool()
@@ -120,7 +136,7 @@ def create_server(store: GraphStore, port: int = 8765) -> FastMCP:
                 Se None, usa padrões: main, run, serve, app, create_app, etc.
         """
         eps = frozenset(entrypoints) if entrypoints else None
-        results = find_dead_code(store, entrypoints=eps, limit=limit)
+        results = find_dead_code(store, entrypoints=eps, limit=_clamp_limit(limit))
         return json.dumps([_node_to_dict(n) for n in results], indent=2, default=str)
 
     @mcp.tool()
@@ -134,7 +150,7 @@ def create_server(store: GraphStore, port: int = 8765) -> FastMCP:
             limit: Máximo de resultados (padrão: 20).
             min_references: Mínimo de referências para aparecer (padrão: 2).
         """
-        results = find_hotspots(store, limit=limit, min_references=min_references)
+        results = find_hotspots(store, limit=_clamp_limit(limit), min_references=min_references)
         return json.dumps([
             {"node": _node_to_dict(r["node"]), "reference_count": r["reference_count"]}
             for r in results

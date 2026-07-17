@@ -14,8 +14,23 @@ def search_symbols(
     kind: str | None = None,
     language: str | None = None,
     limit: int = 50,
+    full_text: bool = False,
 ) -> list[Node]:
-    """Busca símbolos por nome."""
+    """Busca símbolos.
+
+    Por padrão busca por substring no nome (LIKE), o que cobre tanto
+    identificadores snake_case quanto camelCase — o tokenizer padrão do
+    FTS5 não separa palavras dentro de um identificador camelCase (ex:
+    `getUserById` não é encontrado buscando por "user"), então FTS5 não é
+    um substituto direto para busca por nome.
+
+    Com `full_text=True`, usa busca full-text (FTS5) sobre nome + docstring
+    + code_snippet, ranqueada por relevância — útil para buscar por
+    conteúdo (ex: um termo mencionado numa docstring) que a busca por nome
+    nunca encontraria.
+    """
+    if full_text:
+        return store.search_nodes_fts(query, kind=kind, language=language, limit=limit)
     return store.search_nodes(query, kind=kind, language=language, limit=limit)
 
 

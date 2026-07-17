@@ -11,6 +11,24 @@ from eizo.graph.models import DEFINITION_KINDS, Edge, GraphStats, Node
 from eizo.graph.schema import ensure_db_dir, open_db
 
 
+def _sanitize_fts_query(query: str) -> str:
+    """Sanitiza uma query de usuário para uso segura em FTS5 MATCH.
+
+    Só é tratada como sintaxe avançada (passada direto para MATCH) quando
+    contém um wildcard `*` ou um operador booleano isolado (AND/OR/NOT).
+    Caso contrário, é tratada como frase literal: aspas internas são
+    escapadas (dobradas, conforme a sintaxe de string do FTS5) antes de
+    envolver a query entre aspas — assim uma query com uma aspa solta
+    (ex: `foo"bar`) nunca chega ao MATCH como sintaxe malformada.
+    """
+    tokens = query.split()
+    is_advanced = "*" in query or any(t in ("AND", "OR", "NOT") for t in tokens)
+    if is_advanced:
+        return query
+    escaped = query.replace('"', '""')
+    return f'"{escaped}"'
+
+
 class GraphStore:
     """Armazena e consulta o grafo de conhecimento em SQLite."""
 
@@ -197,11 +215,14 @@ class GraphStore:
     ) -> list[Node]:
         """Busca full-text (FTS5) sobre nome + docstring + code_snippet.
 
-        Suporta sintaxe FTS5: prefixo com '*', AND/OR, frases com aspas.
+        Suporta sintaxe FTS5 avançada (prefixo com '*', operadores AND/OR/NOT
+        como palavras isoladas) — passada direto para MATCH quando detectada.
+        Caso contrário, a query é tratada como frase literal (aspas internas
+        são escapadas), então caracteres como `"` no meio de um nome de
+        símbolo nunca chegam a `MATCH` como sintaxe malformada.
         Retorna nós ordenados por relevância (rank FTS5).
         """
-        # Sanitiza query para FTS5 — envolve em aspas se não for query avançada
-        fts_query = query if any(op in query for op in ('"', "*", "AND", "OR", "NOT")) else f'"{query}"'
+        fts_query = _sanitize_fts_query(query)
 
         sql = (
             "SELECT n.* FROM nodes_fts f "

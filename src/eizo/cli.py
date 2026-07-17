@@ -111,6 +111,10 @@ def init(ctx: click.Context, path: str, rebuild: bool, force: bool) -> None:
 @click.option("--kind", help="Filtrar por tipo (function, class, method, import)")
 @click.option("--language", help="Filtrar por linguagem (python, typescript)")
 @click.option("--limit", default=20, help="Limite de resultados")
+@click.option(
+    "--full-text", "full_text", is_flag=True,
+    help="Busca full-text (FTS5) sobre nome + docstring + code_snippet, ranqueada por relevância",
+)
 @click.option("--path", "repo_path", default=".", help="Caminho do repositório")
 @click.pass_context
 def search(
@@ -119,11 +123,12 @@ def search(
     kind: str | None,
     language: str | None,
     limit: int,
+    full_text: bool,
     repo_path: str,
 ) -> None:
     """Busca símbolos no grafo de conhecimento."""
     store = GraphStore(Path(repo_path).resolve())
-    results = search_symbols(store, query, kind=kind, language=language, limit=limit)
+    results = search_symbols(store, query, kind=kind, language=language, limit=limit, full_text=full_text)
 
     if ctx.obj.get("format") == "json":
         _emit_json([_node_to_dict(n) for n in results])
