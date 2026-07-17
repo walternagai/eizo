@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import os
 from pathlib import Path
 
 from rich.console import Console
@@ -97,12 +98,21 @@ def index_repository(
         console.print("[red]✗ Nenhum parser disponível. Instale tree-sitter-python e/ou tree-sitter-typescript.[/red]")
         return store
 
-    # Colete todos os arquivos parseáveis
+    # Colete todos os arquivos parseáveis. Poda IGNORE_DIRS durante o walk
+    # (via os.walk, que permite modificar dirnames in-place) em vez de
+    # enumerar a árvore inteira e filtrar depois — importante para repos
+    # JS/TS onde node_modules pode ter dezenas de milhares de arquivos.
+    extensions = {e for p in parsers for e in p.extensions}
     files: list[Path] = []
-    for ext in {e for p in parsers for e in p.extensions}:
-        files.extend(repo_path.rglob(f"*{ext}"))
+    for dirpath, dirnames, filenames in os.walk(repo_path):
+        dirnames[:] = [d for d in dirnames if d not in IGNORE_DIRS]
+        for filename in filenames:
+            if Path(filename).suffix in extensions:
+                files.append(Path(dirpath) / filename)
 
-    # Filtra ignorados
+    # Filtra ignorados (arquivos ocultos, extensões binárias etc. — a poda
+    # acima já cobre os diretórios em IGNORE_DIRS, mas mantemos o filtro
+    # para os demais critérios de _should_ignore).
     files = [f for f in files if not _should_ignore(f)]
 
     if not files:

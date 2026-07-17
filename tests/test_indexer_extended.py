@@ -107,6 +107,31 @@ class TestIndexRepositoryErrors:
         stats = store.get_stats()
         assert stats.total_nodes == 0
 
+    def test_index_prunes_ignored_dirs_during_walk(self, tmp_path: Path) -> None:
+        """IGNORE_DIRS deve ser podado durante o walk (os.walk com dirnames
+        in-place), não apenas filtrado depois de enumerar a árvore inteira —
+        node_modules nunca deve ser sequer visitado pelo os.walk."""
+        import os as os_module
+
+        repo = Path(tmp_path)
+        (repo / "main.py").write_text("x = 1\n")
+        (repo / "node_modules").mkdir()
+        (repo / "node_modules" / "lib.js").write_text("var x = 1;\n")
+
+        visited: list[str] = []
+        real_walk = os_module.walk
+
+        def spy_walk(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+            for dirpath, dirnames, filenames in real_walk(*args, **kwargs):
+                visited.append(dirpath)
+                yield dirpath, dirnames, filenames
+
+        with patch("eizo.indexer.os.walk", side_effect=spy_walk):
+            index_repository(repo)
+
+        visited_dirs = {Path(p).name for p in visited}
+        assert "node_modules" not in visited_dirs
+
     def test_index_repository_with_errors(self, tmp_path: Path) -> None:
         """Múltiplos erros durante indexação."""
         repo = Path(tmp_path)
