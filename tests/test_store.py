@@ -3,6 +3,34 @@
 from __future__ import annotations
 
 from eizo.graph.models import Edge, Node
+from eizo.graph.store import _extract_import_module_and_symbol, _module_hint_matches_file
+
+
+class TestExtractImportModuleAndSymbol:
+    """Testa _extract_import_module_and_symbol()."""
+
+    def test_from_import_splits_module_and_symbol(self) -> None:
+        assert _extract_import_module_and_symbol("config.get_config") == ("config", "get_config")
+
+    def test_plain_import_has_no_symbol(self) -> None:
+        """Import sem símbolo específico (Python 'import X', ou imports
+        TS/JS que só capturam o caminho do módulo) não tem '.' — não há
+        símbolo para extrair."""
+        assert _extract_import_module_and_symbol("os") == ("os", None)
+
+
+class TestModuleHintMatchesFile:
+    """Testa _module_hint_matches_file()."""
+
+    def test_matches_dotted_package_tail(self) -> None:
+        assert _module_hint_matches_file("pkg.base", "/repo/pkg/base.py") is True
+
+    def test_matches_relative_path_tail(self) -> None:
+        """Path relativo estilo TS ('./components/Base')."""
+        assert _module_hint_matches_file("./components/Base", "/repo/src/Base.tsx") is True
+
+    def test_no_match_different_stem(self) -> None:
+        assert _module_hint_matches_file("other", "/repo/base.py") is False
 
 
 class TestGraphStore:
@@ -234,6 +262,132 @@ class TestGraphStore:
         refs = store.get_real_references("defn", "helper")
         assert len(refs) == 1
         assert refs[0][0].id == "caller"
+
+    def test_get_real_references_resolves_inherits_stub(self, store) -> None:
+        """Uma classe base referenciada só via herança tem um stub externo
+        criado no arquivo da subclasse (metadata.external=True) — a aresta
+        'inherits' aponta para esse stub, não para a definição real.
+        get_real_references precisa resolver o stub de volta."""
+        store.upsert_nodes([
+            Node(id="real_base", name="Base", kind="class", file_path="base.py", language="python"),
+            Node(
+                id="base_stub", name="Base", kind="class", file_path="child.py",
+                language="python", metadata={"external": True},
+            ),
+            Node(id="child", name="Child", kind="class", file_path="child.py", language="python"),
+        ])
+        store.upsert_edges([
+            Edge(source_id="child", target_id="base_stub", kind="inherits"),
+        ])
+
+        refs = store.get_real_references("real_base", "Base")
+        assert refs == [(store.get_node("child"), "inherits")]
+
+    def test_get_real_references_resolves_import_stub(self, store) -> None:
+        """Um import 'from module import symbol' cria um nó kind='import'
+        com nome 'module.symbol' — get_real_references precisa extrair o
+        símbolo e confirmar via module_hint antes de creditar o
+        referrer."""
+        store.upsert_nodes([
+            Node(id="real_fn", name="get_config", kind="function", file_path="config.py", language="python"),
+            Node(
+                id="import_stub", name="config.get_config", kind="import",
+                file_path="user.py", language="python",
+            ),
+            Node(id="user_file", name="user.py", kind="file", file_path="user.py", language="python"),
+        ])
+        store.upsert_edges([
+            Edge(source_id="user_file", target_id="import_stub", kind="imports"),
+        ])
+
+        refs = store.get_real_references("real_fn", "get_config")
+        assert refs == [(store.get_node("user_file"), "imports")]
+
+    def test_get_real_references_disambiguates_by_file_and_import(self, store) -> None:
+        """Duas definições homônimas em arquivos diferentes: um call site
+        só deve ser creditado à que é realmente importada no arquivo do
+        caller (via resolve_call_to_definition), não às duas."""
+        store.upsert_nodes([
+            Node(id="defn_a", name="connect", kind="function", file_path="mod_a.py", language="python"),
+            Node(id="defn_b", name="connect", kind="function", file_path="mod_b.py", language="python"),
+            Node(
+                id="import_stub", name="mod_a.connect", kind="import",
+                file_path="caller.py", language="python",
+            ),
+            Node(id="call_site", name="connect", kind="call", file_path="caller.py", language="python"),
+            Node(id="caller", name="do_it", kind="function", file_path="caller.py", language="python"),
+        ])
+        store.upsert_edges([
+            Edge(source_id="caller", target_id="import_stub", kind="imports"),
+            Edge(source_id="caller", target_id="call_site", kind="calls"),
+        ])
+
+        refs_a = store.get_real_references("defn_a", "connect")
+        refs_b = store.get_real_references("defn_b", "connect")
+
+        # defn_a (mod_a) é a que caller.py importa — deve receber o crédito
+        # das duas referências (import + call).
+        assert {kind for _, kind in refs_a} == {"imports", "calls"}
+        # defn_b (mod_b) não é importada por caller.py — nenhuma referência.
+        assert refs_b == []
+
+    def test_get_real_references_unknown_node_returns_empty(self, store) -> None:
+        """Node id inexistente retorna lista vazia, não lança erro."""
+        assert store.get_real_references("does-not-exist", "whatever") == []
+
+    def test_get_real_references_skips_inherits_stub_for_different_definition(
+        self, store
+    ) -> None:
+        """Um stub externo 'Base' que na verdade resolve para uma OUTRA
+        definição 'Base' (arquivo diferente) não deve creditar sua
+        subclasse à definição errada."""
+        store.upsert_nodes([
+            Node(id="base_x", name="Base", kind="class", file_path="x/base.py", language="python"),
+            Node(id="base_y", name="Base", kind="class", file_path="y/base.py", language="python"),
+            Node(
+                id="stub_in_child", name="Base", kind="class", file_path="child.py",
+                language="python", metadata={"external": True},
+            ),
+            Node(id="child", name="Child", kind="class", file_path="child.py", language="python"),
+        ])
+        store.upsert_edges([
+            Edge(source_id="child", target_id="stub_in_child", kind="inherits"),
+        ])
+
+        # Sem sinal de import para desambiguar, cai no desempate
+        # determinístico (ordenado por file_path) — "x/base.py" vence.
+        refs_x = store.get_real_references("base_x", "Base")
+        refs_y = store.get_real_references("base_y", "Base")
+        assert refs_x == [(store.get_node("child"), "inherits")]
+        assert refs_y == []
+
+    def test_disambiguate_prefers_unique_same_file_among_many(self, store) -> None:
+        """Com 3+ candidatos homônimos, prefere o único que está no mesmo
+        arquivo de quem referencia."""
+        store.upsert_nodes([
+            Node(id="a1", name="run", kind="function", file_path="a.py", language="python"),
+            Node(id="b1", name="run", kind="function", file_path="b.py", language="python"),
+            Node(id="c1", name="run", kind="function", file_path="c.py", language="python"),
+        ])
+        candidates = [store.get_node("a1"), store.get_node("b1"), store.get_node("c1")]
+        resolved = store._disambiguate_definitions("b.py", candidates)
+        assert resolved is not None
+        assert resolved.id == "b1"
+
+    def test_disambiguate_falls_back_deterministically_when_still_ambiguous(
+        self, store
+    ) -> None:
+        """Sem sinal de mesmo-arquivo nem de import, o desempate final é
+        determinístico (ordenado por file_path, line_start) — não depende
+        da ordem arbitrária de retorno do SQLite."""
+        store.upsert_nodes([
+            Node(id="z1", name="run", kind="function", file_path="z.py", language="python", line_start=1),
+            Node(id="a1", name="run", kind="function", file_path="a.py", language="python", line_start=1),
+        ])
+        candidates = [store.get_node("z1"), store.get_node("a1")]
+        resolved = store._disambiguate_definitions("unrelated.py", candidates)
+        assert resolved is not None
+        assert resolved.id == "a1"  # "a.py" < "z.py"
 
     def test_clear_all(self, store) -> None:
         """Limpa todo o grafo."""

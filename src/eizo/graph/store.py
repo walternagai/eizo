@@ -11,6 +11,45 @@ from eizo.graph.models import DEFINITION_KINDS, Edge, GraphStats, Node
 from eizo.graph.schema import ensure_db_dir, open_db
 
 
+def _extract_import_module_and_symbol(import_name: str) -> tuple[str, str | None]:
+    """A partir do nome de um nó de import, extrai (module_hint, symbol).
+
+    Para 'from X import Y' (Python), o nome do nó de import é 'X.Y' —
+    retorna ('X', 'Y'). Para imports sem símbolo específico (Python
+    `import X`, ou imports TS/JS — que só capturam o caminho do módulo,
+    ver parser/typescript.py `_handle_import`), retorna (X, None): não há
+    símbolo para resolver, só o caminho do módulo.
+    """
+    if "." in import_name:
+        module_hint, _, symbol = import_name.rpartition(".")
+        return module_hint, symbol
+    return import_name, None
+
+
+def _module_hint_matches_file(module_hint: str, file_path: str) -> bool:
+    """Heurística: compara o último segmento de `module_hint` (pacote
+    dotted do Python, ou path relativo do TS) com o nome do arquivo (sem
+    extensão). Não é resolução real de import/módulo — é best-effort para
+    desambiguar entre definições homônimas em arquivos diferentes.
+    """
+    file_stem = Path(file_path).stem
+    tail = module_hint.rstrip("/")
+    if "/" in tail:
+        tail = tail.rsplit("/", 1)[-1]
+    elif "." in tail:
+        tail = tail.rsplit(".", 1)[-1]
+    return tail == file_stem
+
+
+def _like_escape(value: str) -> str:
+    """Escapa `%`, `_` e `\\` para uso seguro em cláusulas LIKE ... ESCAPE '\\'.
+
+    Sem isso, um nome de símbolo com underscore (comuníssimo em
+    identificadores snake_case) faria `_` casar com qualquer caractere.
+    """
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def _sanitize_fts_query(query: str) -> str:
     """Sanitiza uma query de usuário para uso segura em FTS5 MATCH.
 
@@ -337,12 +376,73 @@ class GraphStore:
         rows = self.conn.execute(sql, params).fetchall()
         return [self._row_to_edge(r) for r in rows]
 
-    # ─── Resolução de call sites ──────────────────────────────────
+    # ─── Resolução de stubs (call sites, herança, imports) ──────────
     #
-    # O parser cria arestas caller → call_site (nó kind='call') em vez de
-    # caller → definição para chamadas. Estes helpers resolvem esse padrão
-    # de forma centralizada, para não reimplementar a mesma lógica em cada
-    # query module (trace, impact, analysis).
+    # O parser nunca cria arestas caller → definição diretamente: chamadas
+    # criam caller → call_site (nó kind='call'), herança de uma classe base
+    # cria subclasse → stub_da_base (nó kind='class', metadata.external=True),
+    # e imports criam arquivo → stub_do_import (nó kind='import', nome
+    # 'modulo.simbolo' para 'from X import Y'). Estes helpers resolvem esses
+    # três padrões de forma centralizada, para não reimplementar a mesma
+    # lógica em cada query module (trace, impact, analysis) — e para que
+    # todos compartilhem a mesma desambiguação quando duas definições têm
+    # o mesmo nome em arquivos diferentes (ver `_disambiguate_definitions`).
+
+    def _disambiguate_definitions(
+        self, referencing_file_path: str, candidates: list[Node]
+    ) -> Node | None:
+        """Desempata entre múltiplas definições homônimas.
+
+        Sem resolução de tipos/imports completa, usamos uma heurística em
+        cascata: (1) definição no mesmo arquivo de quem referencia — cobre
+        o caso mais comum (função chama outra função do mesmo arquivo);
+        (2) definição cujo arquivo é importado por quem referencia (ver
+        `_is_imported_by`); (3) se ainda ambíguo, a primeira em ordem
+        determinística (arquivo, linha) — evita depender da ordem arbitrária
+        de retorno do SQLite para uma query sem ORDER BY.
+        """
+        if not candidates:
+            return None
+        if len(candidates) == 1:
+            return candidates[0]
+
+        same_file = [c for c in candidates if c.file_path == referencing_file_path]
+        if len(same_file) == 1:
+            return same_file[0]
+
+        imported = [c for c in candidates if self._is_imported_by(referencing_file_path, c)]
+        if len(imported) == 1:
+            return imported[0]
+
+        return sorted(candidates, key=lambda c: (c.file_path, c.line_start or 0))[0]
+
+    def _is_imported_by(self, file_path: str, candidate: Node) -> bool:
+        """Verifica se `file_path` importa `candidate` — heurística: existe
+        um nó de import em `file_path` cujo símbolo importado é
+        `candidate.name` e cujo module_hint bate com o arquivo de
+        `candidate` (ver `_module_hint_matches_file`). Imports sem símbolo
+        específico (Python `import X`, ou imports TS que só capturam o
+        caminho do módulo) nunca confirmam — não há símbolo para comparar.
+        """
+        for node in self.get_nodes_by_file(file_path):
+            if node.kind != "import":
+                continue
+            module_hint, symbol = _extract_import_module_and_symbol(node.name)
+            if symbol == candidate.name and _module_hint_matches_file(module_hint, candidate.file_path):
+                return True
+        return False
+
+    def _resolve_named_stub(self, stub: Node) -> Node | None:
+        """Resolve um stub (call site ou stub de herança) para a definição
+        real com mesmo nome, desambiguando por arquivo/import quando há
+        múltiplos candidatos homônimos. Exclui outros stubs externos dos
+        candidatos (um stub nunca resolve para outro stub)."""
+        candidates = [
+            c
+            for c in self.get_nodes_by_name(stub.name)
+            if c.kind in DEFINITION_KINDS and not c.metadata.get("external")
+        ]
+        return self._disambiguate_definitions(stub.file_path, candidates)
 
     def resolve_call_to_definition(self, call_node: Node) -> Node:
         """Dado um nó kind='call', tenta achar a definição com mesmo nome.
@@ -350,25 +450,47 @@ class GraphStore:
         Retorna o próprio call_node se não houver definição correspondente
         (preserva informação — ex: chamadas a símbolos externos ao repo).
         """
-        for candidate in self.get_nodes_by_name(call_node.name):
-            if candidate.kind in DEFINITION_KINDS:
-                return candidate
-        return call_node
+        return self._resolve_named_stub(call_node) or call_node
+
+    def _import_nodes_referencing(self, symbol_name: str) -> list[Node]:
+        """Retorna nós kind='import' cujo nome termina em '.{symbol_name}'
+        (padrão 'from module import symbol' do parser). Imports sem símbolo
+        específico (Python `import module`, ou imports TS/JS, que só
+        capturam o caminho do módulo) nunca têm esse formato e não
+        aparecem aqui."""
+        rows = self.conn.execute(
+            "SELECT * FROM nodes WHERE kind = 'import' AND name LIKE ? ESCAPE '\\'",
+            (f"%.{_like_escape(symbol_name)}",),
+        ).fetchall()
+        return [self._row_to_node(r) for r in rows]
 
     def get_real_references(self, node_id: str, node_name: str) -> list[tuple[Node, str]]:
         """Retorna (nó_referenciador, kind) para cada referência real a um nó.
 
         Arestas `contains` (arquivo/classe → membro) são puramente
-        estruturais e não indicam uso, por isso são ignoradas. Resolve dois
-        caminhos para achar referências reais:
+        estruturais e não indicam uso, por isso são ignoradas. Resolve
+        quatro caminhos para achar referências reais:
 
-        - Arestas `calls`/`imports`/`inherits` diretas para o nó.
-        - Nós kind='call' com o mesmo nome (call sites), subindo via aresta
-          `calls` até quem fez a chamada.
+        - Arestas `calls`/`imports`/`inherits` diretas para o nó (modelo
+          usado por testes que constroem o grafo manualmente).
+        - Nós kind='call' (call sites) com o mesmo nome, resolvidos
+          especificamente para este nó via `resolve_call_to_definition`
+          (desambiguando entre definições homônimas em arquivos
+          diferentes) — sobe via `calls` até quem fez a chamada.
+        - Stubs de herança (classe base referenciada por nome,
+          metadata.external=True) com o mesmo nome, resolvidos da mesma
+          forma — sobe via `inherits` até a subclasse.
+        - Nós kind='import' cujo símbolo importado é este nó (ver
+          `_import_nodes_referencing`), confirmando via module_hint — sobe
+          via `imports` até quem importou.
 
         Deduplica por (referrer.id, kind): o mesmo caller pode aparecer via
-        ambos os caminhos de `calls`, mas não deve ser contado duas vezes.
+        múltiplos caminhos, mas não deve ser contado duas vezes.
         """
+        node = self.get_node(node_id)
+        if node is None:
+            return []
+
         seen: set[tuple[str, str]] = set()
         results: list[tuple[Node, str]] = []
 
@@ -387,10 +509,33 @@ class GraphStore:
         for call_site in self.get_nodes_by_name(node_name, kind="call"):
             if call_site.id == node_id:
                 continue
+            if self.resolve_call_to_definition(call_site).id != node_id:
+                continue
             for edge in self.get_incoming_edges(call_site.id, kind="calls"):
                 referrer = self.get_node(edge.source_id)
                 if referrer:
                     _add(referrer, "calls")
+
+        if node.kind in DEFINITION_KINDS:
+            for stub in self.get_nodes_by_name(node_name):
+                if stub.id == node_id or not stub.metadata.get("external"):
+                    continue
+                resolved = self._resolve_named_stub(stub)
+                if resolved is None or resolved.id != node_id:
+                    continue
+                for edge in self.get_incoming_edges(stub.id, kind="inherits"):
+                    referrer = self.get_node(edge.source_id)
+                    if referrer:
+                        _add(referrer, "inherits")
+
+        for imp in self._import_nodes_referencing(node_name):
+            module_hint, symbol = _extract_import_module_and_symbol(imp.name)
+            if symbol != node_name or not _module_hint_matches_file(module_hint, node.file_path):
+                continue
+            for edge in self.get_incoming_edges(imp.id, kind="imports"):
+                referrer = self.get_node(edge.source_id)
+                if referrer:
+                    _add(referrer, "imports")
 
         return results
 

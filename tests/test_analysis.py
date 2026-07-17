@@ -214,6 +214,65 @@ class TestFindDeadCodeRealIndexer:
         assert "unused" in names
         assert "used" not in names  # tem 1 caller real
 
+    def test_inherited_base_class_is_not_dead(self, tmp_path: Path) -> None:
+        """Uma classe base usada só via herança (nunca chamada/instanciada
+        diretamente) não deve ser dead code — a aresta 'inherits' aponta
+        para um stub externo criado no arquivo da subclasse, não para a
+        definição real; get_real_references precisa resolver esse stub de
+        volta para a definição."""
+        from eizo.indexer import index_repository
+
+        repo = Path(tmp_path)
+        (repo / "base.py").write_text("class Base:\n    pass\n")
+        (repo / "child.py").write_text(
+            "from base import Base\n\nclass Child(Base):\n    pass\n"
+        )
+        store = GraphStore(repo)
+        index_repository(repo, store, force=True)
+
+        names = {n.name for n in find_dead_code(store)}
+        assert "Base" not in names
+
+    def test_imported_function_is_not_dead(self, tmp_path: Path) -> None:
+        """Uma função só importada (nunca chamada) não deve ser dead code —
+        'from module import symbol' precisa gerar um nó de import
+        resolvível para a definição real de 'symbol'."""
+        from eizo.indexer import index_repository
+
+        repo = Path(tmp_path)
+        (repo / "config.py").write_text("def get_config():\n    pass\n")
+        (repo / "user.py").write_text("from config import get_config\n")
+        store = GraphStore(repo)
+        index_repository(repo, store, force=True)
+
+        names = {n.name for n in find_dead_code(store)}
+        assert "get_config" not in names
+
+    def test_same_name_functions_in_different_files_are_disambiguated(
+        self, tmp_path: Path
+    ) -> None:
+        """Duas funções homônimas em arquivos diferentes: só a que é
+        realmente importada e chamada deve escapar de dead code — a outra,
+        nunca referenciada, deve continuar marcada como dead. Sem
+        desambiguação por arquivo/import, uma chamada credita as duas
+        (nome sozinho não basta para saber qual)."""
+        from eizo.indexer import index_repository
+
+        repo = Path(tmp_path)
+        (repo / "mod_a.py").write_text("def connect():\n    pass\n")
+        (repo / "mod_b.py").write_text("def connect():\n    pass\n")
+        (repo / "caller.py").write_text(
+            "from mod_a import connect\n\ndef do_it():\n    connect()\n"
+        )
+        store = GraphStore(repo)
+        index_repository(repo, store, force=True)
+
+        dead_by_file = {
+            (n.name, Path(n.file_path).name) for n in find_dead_code(store)
+        }
+        assert ("connect", "mod_b.py") in dead_by_file
+        assert ("connect", "mod_a.py") not in dead_by_file
+
 
 class TestFindHotspotsRealIndexer:
     """Testa find_hotspots() contra grafo produzido pelo indexer real."""
