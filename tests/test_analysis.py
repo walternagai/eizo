@@ -404,6 +404,23 @@ class TestMcpAnalysisTools:
         parsed = json.loads(result)
         assert parsed == []
 
+    def test_find_dead_code_symbols_clamps_huge_limit(self, analysis_store: GraphStore) -> None:
+        """limit absurdamente alto é limitado a um teto (proteção contra DoS)."""
+        mcp = create_server(analysis_store, port=12345)
+        fn = _get_tool_fn(mcp, "find_dead_code_symbols")
+        # Não deve lançar nem tentar alocar um resultset de 10 milhões.
+        result = fn(limit=10_000_000)
+        parsed = json.loads(result)
+        assert isinstance(parsed, list)
+
+    def test_get_hotspots_clamps_huge_limit(self, analysis_store: GraphStore) -> None:
+        """limit absurdamente alto é limitado a um teto (proteção contra DoS)."""
+        mcp = create_server(analysis_store, port=12345)
+        fn = _get_tool_fn(mcp, "get_hotspots")
+        result = fn(limit=10_000_000, min_references=1)
+        parsed = json.loads(result)
+        assert isinstance(parsed, list)
+
 
 # ─── MCP: serve_mcp com transport stdio ────────────────────────
 

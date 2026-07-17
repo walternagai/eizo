@@ -24,7 +24,10 @@ class Node:
     line_end: int | None = None
     docstring: str | None = None
     code_snippet: str | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
+    # hash=False: dict não é hashável — excluído do __hash__ gerado pelo
+    # dataclass frozen (mas ainda participa de __eq__). Sem isso, hash(Node(...))
+    # lança TypeError apesar de a classe parecer hashável (frozen=True).
+    metadata: dict[str, Any] = field(default_factory=dict, hash=False)
 
 
 @dataclass(frozen=True)
@@ -34,7 +37,7 @@ class Edge:
     source_id: str
     target_id: str
     kind: str  # calls, imports, inherits, contains
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict, hash=False)
 
 
 @dataclass

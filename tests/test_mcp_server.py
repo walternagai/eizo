@@ -12,7 +12,21 @@ import pytest
 
 from eizo.graph.models import Edge, Node
 from eizo.graph.store import GraphStore
-from eizo.mcp.server import _node_to_dict, create_server, serve_mcp
+from eizo.mcp.server import _clamp_limit, _node_to_dict, create_server, serve_mcp
+
+
+class TestClampLimit:
+    """Testa _clamp_limit()."""
+
+    def test_clamp_within_range(self) -> None:
+        assert _clamp_limit(50) == 50
+
+    def test_clamp_caps_huge_value(self) -> None:
+        assert _clamp_limit(10_000_000) == 500
+
+    def test_clamp_floors_non_positive(self) -> None:
+        assert _clamp_limit(0) == 1
+        assert _clamp_limit(-5) == 1
 
 # ─── _node_to_dict ───
 

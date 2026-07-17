@@ -142,6 +142,10 @@ def open_db(path: Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
+    # Sem isso, um segundo processo escrevendo concorrentemente (ex: `eizo mcp`
+    # servindo enquanto `eizo init` reindexa) recebe "database is locked"
+    # imediatamente em vez de esperar o lock liberar.
+    conn.execute("PRAGMA busy_timeout=5000")
 
     # Inicializa schema se tabelas não existirem
     cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='meta'")

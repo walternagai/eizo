@@ -80,3 +80,14 @@ class TestSchema:
         assert row[0] == "wal"
 
         conn.close()
+
+    def test_open_db_busy_timeout(self, tmp_path: Path) -> None:
+        """open_db deve configurar busy_timeout > 0 (evita 'database is
+        locked' imediato com escritores concorrentes)."""
+        db_path = ensure_db_dir(tmp_path)
+        conn = open_db(db_path)
+
+        row = conn.execute("PRAGMA busy_timeout").fetchone()
+        assert row[0] > 0
+
+        conn.close()
