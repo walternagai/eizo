@@ -133,6 +133,11 @@ class PythonParser(BaseParser):
             self._handle_import_from(node, source, file_path, nodes, edges, parent_id)
         elif node_type == "call":
             self._handle_call(node, source, file_path, nodes, edges, parent_id)
+            # Continua recursão dentro da call (ex: argumentos) para capturar
+            # chamadas aninhadas como `outer(inner())` — mesmo parent_id, pois
+            # o call em si não introduz um novo escopo de função.
+            for child in node.children:
+                self._walk_tree(child, source, file_path, nodes, edges, parent_id)
         else:
             # Continua recursão para nós não tratados
             for child in node.children:

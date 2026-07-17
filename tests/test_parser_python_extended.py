@@ -107,6 +107,19 @@ def caller() -> None:
         assert len(calls) >= 1
         assert calls[0].name == "method"
 
+    def test_parse_nested_call_in_arguments(self, parser: PythonParser) -> None:
+        """Chamada aninhada nos argumentos (outer(inner())) deve extrair ambas."""
+        source = """
+def caller() -> None:
+    process(transform(fetch()))
+"""
+        nodes, edges = parser.parse_file(Path("main.py"), source)
+        call_names = {n.name for n in nodes if n.kind == "call"}
+        assert call_names == {"process", "transform", "fetch"}
+        call_edges = {e.metadata.get("call_name") for e in edges if e.kind == "calls"}
+        # Todas as chamadas aninhadas devem ser atribuídas ao mesmo escopo chamador.
+        assert call_edges == {"process", "transform", "fetch"}
+
     def test_parse_async_function(self, parser: PythonParser) -> None:
         """Função async deve ser extraída."""
         source = """

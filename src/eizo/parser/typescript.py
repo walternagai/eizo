@@ -35,6 +35,37 @@ def _get_text(source: bytes, node: Any) -> str:
     return source[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
 
 
+def _arrow_function_name(node: Any, source: bytes) -> tuple[str | None, str]:
+    """Tenta extrair um nome para uma arrow function a partir do nó pai.
+
+    Retorna (nome, kind): kind='method' para propriedades de objeto/classe,
+    'function' para atribuição a variável. (None, "function") se anônima
+    (ex: callback passado inline como argumento).
+    """
+    parent = node.parent
+    if parent is None:
+        return None, "function"
+
+    # Nós tree-sitter reemitidos por child_by_field_name() não preservam
+    # identidade (`is`), mas comparam iguais (`==`) quando é o mesmo nó.
+    if parent.type == "variable_declarator" and parent.child_by_field_name("value") == node:
+        name_node = parent.child_by_field_name("name")
+        if name_node is not None and name_node.type == "identifier":
+            return _get_text(source, name_node), "function"
+
+    if parent.type == "pair" and parent.child_by_field_name("value") == node:
+        key_node = parent.child_by_field_name("key")
+        if key_node is not None:
+            return _get_text(source, key_node), "method"
+
+    if parent.type == "public_field_definition" and parent.child_by_field_name("value") == node:
+        name_node = parent.child_by_field_name("name")
+        if name_node is not None:
+            return _get_text(source, name_node), "method"
+
+    return None, "function"
+
+
 class TypeScriptParser(BaseParser):
     """Parser para TypeScript/JavaScript."""
 
@@ -106,12 +137,17 @@ class TypeScriptParser(BaseParser):
         elif node_type in ("class_declaration", "class"):
             self._handle_class(node, source, file_path, nodes, edges, parent_id)
         elif node_type in ("arrow_function",):
-            # Arrow functions anônimas — só extrai se tiver nome via assignment
-            pass
+            self._handle_arrow_function(node, source, file_path, nodes, edges, parent_id)
         elif node_type in ("import_statement", "import"):
             self._handle_import(node, source, file_path, nodes, edges, parent_id)
         elif node_type == "call_expression":
             self._handle_call(node, source, file_path, nodes, edges, parent_id)
+            # Continua recursão dentro da call (ex: argumentos) para capturar
+            # chamadas aninhadas como `outer(inner())` e callbacks como
+            # `useEffect(() => { ... })` — mesmo parent_id, pois o call em si
+            # não introduz um novo escopo de função.
+            for child in node.children:
+                self._walk_tree(child, source, file_path, nodes, edges, parent_id)
         elif node_type == "export_statement":
             # Export statement pode conter declarações
             for child in node.children:
@@ -201,6 +237,55 @@ class TypeScriptParser(BaseParser):
 
         for child in node.children:
             self._walk_tree(child, source, file_path, nodes, edges, method_node.id)
+
+    def _handle_arrow_function(
+        self,
+        node: Any,
+        source: bytes,
+        file_path: str,
+        nodes: list[Node],
+        edges: list[Edge],
+        parent_id: str | None,
+    ) -> None:
+        """Extrai uma arrow function.
+
+        Arrow functions são anônimas na AST — só ganham nome quando atribuídas
+        a uma variável (`const foo = () => ...`) ou usadas como propriedade de
+        objeto/classe (`{ method: () => ... }`, `method = () => ...`). Nesses
+        casos tratamos como uma definição nomeada. Caso contrário (ex: callback
+        inline como `useEffect(() => ...)`), continuamos a recursão no corpo
+        mantendo o escopo do chamador, para não perder as chamadas internas.
+        """
+        name, kind = _arrow_function_name(node, source)
+
+        next_parent_id = parent_id
+        if name:
+            start_line = node.start_point[0] + 1
+            end_line = node.end_point[0] + 1
+            code = _get_text(source, node)
+
+            func_node = Node(
+                id=_node_id(name, file_path, start_line),
+                name=name,
+                kind=kind,
+                file_path=file_path,
+                language="typescript",
+                line_start=start_line,
+                line_end=end_line,
+                code_snippet=code[:500],
+            )
+            nodes.append(func_node)
+
+            if parent_id:
+                edges.append(Edge(
+                    source_id=parent_id,
+                    target_id=func_node.id,
+                    kind="contains",
+                ))
+            next_parent_id = func_node.id
+
+        for child in node.children:
+            self._walk_tree(child, source, file_path, nodes, edges, next_parent_id)
 
     def _handle_class(
         self,

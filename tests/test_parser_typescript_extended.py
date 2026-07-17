@@ -22,16 +22,87 @@ class TestTypeScriptParserEdgeCases:
     """Testes para edge cases do parser TypeScript."""
 
     def test_parse_arrow_function_named(self, parser: TypeScriptParser) -> None:
-        """Arrow function nomeada via const deve ser extraída."""
+        """Arrow function nomeada via const deve ser extraída como function."""
         source = """
 const greet = (name: string): string => {
     return `Hello ${name}`;
 };
 """
         nodes, edges = parser.parse_file(Path("main.ts"), source)
-        # Arrow functions anônimas não são extraídas atualmente
-        # Mas não deve crashar
-        assert len(nodes) >= 1
+        funcs = [n for n in nodes if n.kind == "function"]
+        assert len(funcs) == 1
+        assert funcs[0].name == "greet"
+
+    def test_parse_arrow_function_calls_body(self, parser: TypeScriptParser) -> None:
+        """Chamadas dentro do corpo de uma arrow function devem ser extraídas."""
+        source = """
+const run = () => {
+    doWork();
+};
+"""
+        nodes, edges = parser.parse_file(Path("main.ts"), source)
+        call_names = {n.name for n in nodes if n.kind == "call"}
+        assert "doWork" in call_names
+        # doWork deve ser atribuído ao escopo da função nomeada 'run'.
+        run_node = next(n for n in nodes if n.kind == "function" and n.name == "run")
+        assert any(
+            e.kind == "calls" and e.source_id == run_node.id and e.metadata.get("call_name") == "doWork"
+            for e in edges
+        )
+
+    def test_parse_arrow_function_anonymous_callback(self, parser: TypeScriptParser) -> None:
+        """Callback inline anônimo (ex: useEffect) não vira function, mas suas
+        chamadas internas ainda devem ser extraídas."""
+        source = """
+useEffect(() => {
+    doSomething();
+}, []);
+"""
+        nodes, edges = parser.parse_file(Path("main.tsx"), source)
+        # A arrow function anônima em si não deve virar um nó function/method
+        # (não há nome de variável nem propriedade para nomeá-la).
+        assert not any(n.kind in ("function", "method") for n in nodes)
+        call_names = {n.name for n in nodes if n.kind == "call"}
+        assert {"useEffect", "doSomething"} <= call_names
+
+    def test_parse_arrow_function_object_method(self, parser: TypeScriptParser) -> None:
+        """Arrow function como propriedade de objeto deve virar method nomeado."""
+        source = """
+const service = {
+    handler: () => { process(); }
+};
+"""
+        nodes, edges = parser.parse_file(Path("main.ts"), source)
+        methods = [n for n in nodes if n.kind == "method"]
+        assert len(methods) == 1
+        assert methods[0].name == "handler"
+        call_names = {n.name for n in nodes if n.kind == "call"}
+        assert "process" in call_names
+
+    def test_parse_arrow_function_class_field(self, parser: TypeScriptParser) -> None:
+        """Arrow function como class field (method = () => ...) vira method nomeado."""
+        source = """
+class Service {
+    handler = () => { process(); };
+}
+"""
+        nodes, edges = parser.parse_file(Path("main.ts"), source)
+        methods = [n for n in nodes if n.kind == "method"]
+        assert len(methods) == 1
+        assert methods[0].name == "handler"
+        call_names = {n.name for n in nodes if n.kind == "call"}
+        assert "process" in call_names
+
+    def test_parse_nested_call_in_arguments(self, parser: TypeScriptParser) -> None:
+        """Chamada aninhada nos argumentos (outer(inner())) deve extrair ambas."""
+        source = """
+function caller() {
+    process(transform(fetch()));
+}
+"""
+        nodes, edges = parser.parse_file(Path("main.ts"), source)
+        call_names = {n.name for n in nodes if n.kind == "call"}
+        assert call_names == {"process", "transform", "fetch"}
 
     def test_parse_interface(self, parser: TypeScriptParser) -> None:
         """Interface não deve crashar."""
