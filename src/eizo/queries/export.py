@@ -4,12 +4,15 @@ Suporta:
 - DOT (Graphviz): para renderização com `dot -Tpng graph.dot -o graph.png`
 - Mermaid: para renderização em GitHub, GitLab, Notion, etc.
 - JSON: para importação em ferramentas de visualização
+- HTML: grafo 3D interativo e navegável no browser (offline, self-contained)
 
 Filtros opcionais: por kind, por linguagem, por arquivo (glob), limite de nós.
 """
 
 from __future__ import annotations
 
+import json
+from importlib import resources
 from typing import Any
 
 from eizo.graph.models import Edge, Node
@@ -279,3 +282,84 @@ def export_json(
 def _mermaid_safe_id(node_id: str) -> str:
     """Sanitiza ID para Mermaid (apenas alphanumericos e underscore)."""
     return "n" + node_id.replace("-", "_")
+
+
+def _compute_degrees(node_ids: set[str], edges: list[Edge]) -> dict[str, int]:
+    """Calcula grau (entrada + saída) de cada nó, restrito às arestas fornecidas."""
+    degrees: dict[str, int] = dict.fromkeys(node_ids, 0)
+    for e in edges:
+        if e.source_id in degrees:
+            degrees[e.source_id] += 1
+        if e.target_id in degrees:
+            degrees[e.target_id] += 1
+    return degrees
+
+
+def export_html(
+    store: GraphStore,
+    kind: str | None = None,
+    language: str | None = None,
+    limit: int | None = None,
+    edge_kinds: frozenset[str] | None = None,
+) -> str:
+    """Exporta o grafo para um arquivo HTML autocontido com visualização 3D.
+
+    Usa a biblioteca 3d-force-graph (vendorizada, sem dependência de rede)
+    para renderizar um grafo interativo navegável no browser: rotação/zoom,
+    destaque de vizinhos ao passar o mouse, painel de detalhes ao clicar em
+    um nó, e busca por nome.
+
+    Args:
+        store: GraphStore com o grafo.
+        kind: Filtrar nós por tipo (function, class, method).
+        language: Filtrar nós por linguagem.
+        limit: Máximo de nós.
+        edge_kinds: Filtrar arestas por tipo (calls, imports, inherits, contains).
+            Se None, inclui todas.
+
+    Returns:
+        String HTML pronta para salvar em arquivo e abrir no browser.
+    """
+    nodes = _fetch_nodes(store, kind=kind, language=language, limit=limit)
+    node_ids = {n.id for n in nodes}
+    edges = _fetch_edges_for_nodes(store, node_ids)
+
+    if edge_kinds:
+        edges = [e for e in edges if e.kind in edge_kinds]
+
+    degrees = _compute_degrees(node_ids, edges)
+
+    graph_data = {
+        "nodes": [
+            {
+                "id": n.id,
+                "name": n.name,
+                "kind": n.kind,
+                "language": n.language,
+                "file_path": n.file_path,
+                "line_start": n.line_start,
+                "line_end": n.line_end,
+                "docstring": n.docstring,
+                "val": degrees.get(n.id, 0),
+            }
+            for n in nodes
+        ],
+        "links": [
+            {
+                "source": e.source_id,
+                "target": e.target_id,
+                "kind": e.kind,
+            }
+            for e in edges
+        ],
+    }
+
+    # Escapa "</" para que docstrings/nomes contendo "</script>" não fechem a
+    # tag <script type="application/json"> prematuramente quando o HTML for parseado.
+    graph_json = json.dumps(graph_data, default=str).replace("</", "<\\/")
+
+    template = resources.files("eizo.static").joinpath("graph_view.html.template").read_text(encoding="utf-8")
+    vendor_js = resources.files("eizo.static.vendor").joinpath("3d-force-graph.min.js").read_text(encoding="utf-8")
+
+    html = template.replace("__GRAPH_DATA__", graph_json).replace("__VENDOR_JS__", vendor_js)
+    return html

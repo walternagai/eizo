@@ -10,7 +10,7 @@ Comandos:
   eizo status   Estatísticas do grafo
   eizo dead     Detecta código morto (sem callers)
   eizo hotspots Mostra símbolos mais referenciados
-  eizo export   Exporta grafo em DOT/Mermaid/JSON
+  eizo export   Exporta grafo em DOT/Mermaid/JSON/HTML (3D)
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from rich.tree import Tree
 from eizo.graph.store import GraphStore
 from eizo.indexer import index_repository
 from eizo.queries.analysis import find_dead_code, find_hotspots
-from eizo.queries.export import export_dot, export_json, export_mermaid
+from eizo.queries.export import export_dot, export_html, export_json, export_mermaid
 from eizo.queries.impact import analyze_impact
 from eizo.queries.search import search_symbols
 from eizo.queries.trace import trace_call_path
@@ -531,7 +531,7 @@ def hotspots(
 
 
 @main.command()
-@click.argument("format", type=click.Choice(["dot", "mermaid", "json"]))
+@click.argument("format", type=click.Choice(["dot", "mermaid", "json", "html"]))
 @click.option("--kind", help="Filtrar nós por tipo (function, class, method)")
 @click.option("--language", help="Filtrar nós por linguagem (python, typescript)")
 @click.option("--limit", default=None, type=int, help="Máximo de nós")
@@ -559,13 +559,14 @@ def export(
     output: str | None,
     repo_path: str,
 ) -> None:
-    """Exporta o grafo em formato DOT, Mermaid ou JSON.
+    """Exporta o grafo em formato DOT, Mermaid, JSON ou HTML (grafo 3D interativo).
 
     \b
     Exemplos:
       eizo export dot -o graph.dot
       eizo export mermaid --kind class --edge-kind inherits
       eizo export json --language python --limit 50
+      eizo export html -o graph.html && open graph.html
     """
     store = GraphStore(Path(repo_path).resolve())
     eps = frozenset(edge_kinds) if edge_kinds else None
@@ -577,6 +578,8 @@ def export(
             store, kind=kind, language=language, limit=limit,
             edge_kinds=eps, diagram_type=diagram_type,
         )
+    elif format == "html":
+        result = export_html(store, kind=kind, language=language, limit=limit, edge_kinds=eps)
     else:  # json
         result = export_json(store, kind=kind, language=language, limit=limit, edge_kinds=eps)
 

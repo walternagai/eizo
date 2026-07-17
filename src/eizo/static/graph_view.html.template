@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Eizō — Grafo 3D</title>
+<style>
+  html, body { margin: 0; padding: 0; overflow: hidden; background: #0b0e14; font-family: Arial, Helvetica, sans-serif; }
+  #graph { width: 100vw; height: 100vh; display: block; }
+
+  #toolbar {
+    position: absolute; top: 12px; left: 12px; z-index: 10;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  #search {
+    width: 260px; padding: 8px 10px; border-radius: 6px; border: 1px solid #333;
+    background: #161b24; color: #e8e8e8; font-size: 13px;
+  }
+  #search:focus { outline: 2px solid #4f8ef7; }
+
+  #legend {
+    background: rgba(22, 27, 36, 0.9); border: 1px solid #333; border-radius: 6px;
+    padding: 10px 12px; color: #ccc; font-size: 12px; width: 260px;
+  }
+  #legend h4 { margin: 0 0 6px 0; font-size: 12px; color: #999; font-weight: normal; }
+  .legend-row { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
+  .legend-swatch { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+
+  #info-panel {
+    position: absolute; top: 12px; right: 12px; z-index: 10;
+    width: 320px; max-height: 80vh; overflow-y: auto;
+    background: rgba(22, 27, 36, 0.95); border: 1px solid #333; border-radius: 6px;
+    padding: 14px 16px; color: #e8e8e8; font-size: 13px; display: none;
+  }
+  #info-panel h3 { margin: 0 0 8px 0; font-size: 15px; word-break: break-word; }
+  #info-panel .field { margin: 6px 0; }
+  #info-panel .field-label { color: #888; font-size: 11px; text-transform: uppercase; }
+  #info-panel pre {
+    white-space: pre-wrap; word-break: break-word; background: #0b0e14;
+    padding: 8px; border-radius: 4px; font-size: 12px; max-height: 200px; overflow-y: auto;
+  }
+  #info-panel .close-btn {
+    position: absolute; top: 8px; right: 10px; cursor: pointer; color: #888; font-size: 16px;
+  }
+  #info-panel .close-btn:hover { color: #e8e8e8; }
+
+  #stats {
+    position: absolute; bottom: 10px; left: 12px; z-index: 10;
+    color: #666; font-size: 11px;
+  }
+</style>
+</head>
+<body>
+
+<div id="toolbar">
+  <input id="search" type="text" placeholder="Buscar nó por nome..." autocomplete="off">
+  <div id="legend"><h4>Tipos de nó</h4></div>
+</div>
+
+<div id="info-panel">
+  <span class="close-btn" onclick="closeInfoPanel()">✕</span>
+  <div id="info-content"></div>
+</div>
+
+<div id="stats"></div>
+
+<div id="graph"></div>
+
+<script id="graph-data" type="application/json">__GRAPH_DATA__</script>
+<script>__VENDOR_JS__</script>
+
+<script>
+(function () {
+  const data = JSON.parse(document.getElementById('graph-data').textContent);
+
+  const KIND_COLORS = {
+    class: '#7ec8e3',
+    function: '#8fd694',
+    method: '#f0e08a',
+    import: '#c9a0dc',
+    file: '#d9d9d9',
+    module: '#d9d9d9',
+  };
+  const DEFAULT_COLOR = '#ffffff';
+
+  const EDGE_COLORS = {
+    calls: '#4f8ef7',
+    imports: '#c9a0dc',
+    inherits: '#f0a35a',
+    contains: '#666666',
+  };
+  const DEFAULT_EDGE_COLOR = '#555555';
+
+  function nodeColor(node) {
+    return KIND_COLORS[node.kind] || DEFAULT_COLOR;
+  }
+
+  function edgeColor(link) {
+    return EDGE_COLORS[link.kind] || DEFAULT_EDGE_COLOR;
+  }
+
+  // Legenda: apenas os kinds presentes no grafo carregado.
+  const kindsPresent = Array.from(new Set(data.nodes.map(n => n.kind))).sort();
+  const legendEl = document.getElementById('legend');
+  kindsPresent.forEach(kind => {
+    const row = document.createElement('div');
+    row.className = 'legend-row';
+    const swatch = document.createElement('span');
+    swatch.className = 'legend-swatch';
+    swatch.style.background = KIND_COLORS[kind] || DEFAULT_COLOR;
+    row.appendChild(swatch);
+    const label = document.createElement('span');
+    label.textContent = kind;
+    row.appendChild(label);
+    legendEl.appendChild(row);
+  });
+
+  document.getElementById('stats').textContent =
+    data.nodes.length + ' nós, ' + data.links.length + ' arestas';
+
+  const highlightNodes = new Set();
+  const highlightLinks = new Set();
+  let hoverNode = null;
+
+  const Graph = ForceGraph3D()(document.getElementById('graph'))
+    .graphData(data)
+    .nodeId('id')
+    .nodeLabel(n => `${n.name} (${n.kind})`)
+    .nodeVal(n => Math.max(1, n.val))
+    .nodeColor(node => {
+      if (highlightNodes.size === 0) return nodeColor(node);
+      return highlightNodes.has(node) ? nodeColor(node) : 'rgba(255,255,255,0.15)';
+    })
+    .linkColor(link => {
+      if (highlightLinks.size === 0) return edgeColor(link);
+      return highlightLinks.has(link) ? edgeColor(link) : 'rgba(255,255,255,0.05)';
+    })
+    .linkOpacity(0.6)
+    .linkDirectionalArrowLength(3.5)
+    .linkDirectionalArrowRelPos(1)
+    .linkWidth(link => highlightLinks.has(link) ? 2 : 0.5)
+    .onNodeHover(node => {
+      highlightNodes.clear();
+      highlightLinks.clear();
+      if (node) {
+        highlightNodes.add(node);
+        data.links.forEach(l => {
+          if (l.source.id === node.id || l.target.id === node.id || l.source === node.id || l.target === node.id) {
+            highlightLinks.add(l);
+            highlightNodes.add(l.source);
+            highlightNodes.add(l.target);
+          }
+        });
+      }
+      hoverNode = node || null;
+      Graph.nodeColor(Graph.nodeColor());
+      Graph.linkColor(Graph.linkColor());
+    })
+    .onNodeClick(node => showInfoPanel(node));
+
+  function showInfoPanel(node) {
+    const panel = document.getElementById('info-panel');
+    const content = document.getElementById('info-content');
+    const loc = node.line_start
+      ? `${node.file_path}:${node.line_start}${node.line_end ? '-' + node.line_end : ''}`
+      : node.file_path;
+    content.innerHTML = `
+      <h3>${escapeHtml(node.name)}</h3>
+      <div class="field"><div class="field-label">Tipo</div>${escapeHtml(node.kind)}</div>
+      <div class="field"><div class="field-label">Linguagem</div>${escapeHtml(node.language || '')}</div>
+      <div class="field"><div class="field-label">Localização</div>${escapeHtml(loc)}</div>
+      <div class="field"><div class="field-label">Conexões</div>${node.val}</div>
+      ${node.docstring ? `<div class="field"><div class="field-label">Docstring</div><pre>${escapeHtml(node.docstring)}</pre></div>` : ''}
+    `;
+    panel.style.display = 'block';
+  }
+
+  window.closeInfoPanel = function () {
+    document.getElementById('info-panel').style.display = 'none';
+  };
+
+  function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str == null ? '' : String(str);
+    return div.innerHTML;
+  }
+
+  // Busca client-side: foca a câmera no primeiro nó cujo nome contém o termo.
+  const searchInput = document.getElementById('search');
+  searchInput.addEventListener('keydown', e => {
+    if (e.key !== 'Enter') return;
+    const term = searchInput.value.trim().toLowerCase();
+    if (!term) return;
+    const match = data.nodes.find(n => n.name.toLowerCase().includes(term));
+    if (!match) return;
+    const distance = 80;
+    const distRatio = 1 + distance / Math.hypot(match.x || 1, match.y || 1, match.z || 1);
+    Graph.cameraPosition(
+      { x: (match.x || 0) * distRatio, y: (match.y || 0) * distRatio, z: (match.z || 0) * distRatio },
+      match,
+      1000
+    );
+    showInfoPanel(match);
+  });
+})();
+</script>
+
+</body>
+</html>

@@ -143,6 +143,21 @@ eizo export mermaid --diagram-type classDiagram
 
 Filtros disponíveis: `--kind`, `--language`, `--limit`, `--edge-kind` (múltiplo).
 
+### Visualizar em 3D
+
+```bash
+# Gera um HTML autocontido (offline, sem dependência de rede) com o grafo
+# navegável em 3D: rotação/zoom, destaque de vizinhos ao passar o mouse,
+# painel de detalhes ao clicar em um nó, e busca por nome
+eizo export html -o graph.html
+
+# abra graph.html no navegador
+
+# Os mesmos filtros de --kind/--language/--limit/--edge-kind se aplicam,
+# útil para focar em uma parte do grafo (ex: apenas hierarquia de classes)
+eizo export html --kind class --edge-kind inherits -o classes.html
+```
+
 ### Visão arquitetural
 
 ```bash
