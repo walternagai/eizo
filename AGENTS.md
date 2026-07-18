@@ -15,7 +15,7 @@ make coverage    # pytest --cov=src/eizo --cov-report=term-missing
 
 ## Entry points
 
-- `eizo` CLI: `eizo.cli:main` (Click group, 10 commands)
+- `eizo` CLI: `eizo.cli:main` (Click group, 12 commands)
 - `python -m eizo`: `eizo/__main__.py` → `cli.main()`
 - `eizo.mcp.server.serve_mcp()`: FastMCP server, invoked via `eizo mcp`
 
@@ -109,8 +109,8 @@ src/eizo/
 │   ├── impact.py   # analyze_impact() — dependency chain
 │   ├── analysis.py # find_dead_code(), find_hotspots()
 │   └── export.py   # export_dot(), export_mermaid(), export_json()
-└── mcp/
-    └── server.py   # FastMCP server (7 tools)
+    └── mcp/
+    │       └── server.py   # FastMCP server (8 tools)
 ```
 
 ## Tree-sitter quirks
@@ -142,9 +142,14 @@ src/eizo/
 - `store` fixture: `GraphStore(tmp_path)` — SQLite in temp dir.
 - `sample_python_file` / `sample_ts_file`: string fixtures for parser tests.
 - `sample_python_repo`: creates real dir tree for indexer tests.
-- Coverage gate: 70%. `cli.py` and `__main__.py` are untested (0%).
+- Coverage gate: 70%.
+- `cli.py`: 99% coverage; `__main__.py`: 100% coverage.
 - `asyncio_mode = auto` in pytest config.
-- 297 tests total. New test files: `test_incremental.py`, `test_analysis.py`, `test_export.py`.
+- 430 tests total. Test files include: `test_cli.py`, `test_main.py`, `test_indexer.py`,
+  `test_indexer_extended.py`, `test_incremental.py`, `test_analysis.py`, `test_export.py`,
+  `test_export_html.py`, `test_queries_extended.py`, `test_store_extended.py`,
+  `test_parser_python_extended.py`, `test_parser_typescript_extended.py`,
+  `test_mcp_server.py`, `test_coverage_gaps.py`.
 
 ## Conventions
 

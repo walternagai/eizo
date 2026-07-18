@@ -47,6 +47,13 @@ eizo init
 # Indexa um diretório específico
 eizo init /caminho/do/projeto
 
+# Ou via --repo/-C
+eizo init --repo /caminho/do/projeto
+
+# Lista arquivos que seriam indexados sem persistir
+eizo init --dry-run
+eizo init --dry-run --output-format json
+
 # Força reindexação de todos os arquivos
 eizo init --force
 
@@ -69,6 +76,9 @@ eizo search "User" --kind class --language python
 
 # Limita resultados
 eizo search "helper" --limit 5
+
+# Busca full-text (FTS5) em docstrings e trechos de código
+eizo search "processa pagamento" --full-text
 ```
 
 ### Traçar call graph
@@ -302,7 +312,7 @@ eizo mcp --port 9090
 eizo mcp --transport stdio
 
 # Repositório específico
-eizo mcp --path /caminho/do/projeto
+eizo mcp --repo /caminho/do/projeto
 ```
 
 O servidor expõe 8 ferramentas MCP:
@@ -340,15 +350,59 @@ eizo status
 | `eizo mcp` | Servidor MCP |
 | `eizo status` | Estatísticas do grafo |
 
-### Opção global `--format json`
+### Opções globais
 
-Todos os comandos de consulta suportam `--format json` para piping em scripts e agents:
+| Opção | Descrição |
+|---|---|
+| `--output-format [table\|json]` | Formato de saída (padrão: `table`) |
+| `--repo`, `-C` | Caminho do repositório |
+| `--config` | Arquivo de configuração JSON alternativo |
+| `--color` | Força cores na saída |
+| `--no-color` | Desativa cores na saída |
+| `-v`, `-vv` | Aumenta verbosidade (INFO / DEBUG) |
+| `--quiet` | Silencia mensagens de log (apenas erros) |
+| `--show-completion` | Mostra script de shell completion |
+| `--install-completion` | Mostra script de shell completion |
+
+Todos os comandos de consulta suportam `--output-format json` para piping em scripts e agents:
 
 ```bash
-eizo --format json search "UserModel" | jq '.[0].file_path'
-eizo --format json dead | jq 'length'
-eizo --format json hotspots --min-refs 3 | jq '.[] | .node.name'
+eizo --output-format json search "UserModel" | jq '.[0].file_path'
+eizo --output-format json dead | jq 'length'
+eizo --output-format json hotspots --min-refs 3 | jq '.[] | .node.name'
+eizo --output-format json init /caminho/do/projeto
 ```
+
+### Configuração via arquivo
+
+Crie `{repo}/.eizo/config.json` para definir defaults por repositório:
+
+```json
+{
+  "output_format": "json",
+  "no_color": false,
+  "limit": 20,
+  "depth": 3,
+  "min_refs": 3,
+  "full_text": true
+}
+```
+
+Prioridade de merge: **CLI args > env vars > config file > Click defaults**.
+
+### Variáveis de ambiente
+
+| Variável | Descrição |
+|---|---|
+| `EIZO_OUTPUT_FORMAT` | Default de `--output-format` |
+| `EIZO_REPO` | Default de `--repo`/`-C` |
+| `EIZO_CONFIG` | Caminho alternativo do config.json |
+| `EIZO_NO_COLOR` | Desativa cores (`1`, `true`, `yes`, `on`) |
+| `NO_COLOR` | Padrão global; também desativa cores |
+| `EIZO_LIMIT` | Default de `--limit` |
+| `EIZO_DEPTH` | Default de `--depth` |
+| `EIZO_MIN_REFS` | Default de `--min-refs` |
+| `EIZO_FULL_TEXT` | Default de `--full-text` |
 
 ## Desenvolvimento
 
@@ -366,34 +420,53 @@ make coverage     # pytest com cobertura
 ```
 eizo/
 ├── src/eizo/
-│   ├── cli.py               # Entry point Click
-│   ├── indexer.py           # Orquestrador de indexação
+│   ├── cli.py               # Entry point Click (12 comandos)
+│   ├── __main__.py          # python -m eizo
+│   ├── indexer.py           # Orquestrador de indexação incremental
 │   ├── graph/
-│   │   ├── models.py        # Dataclasses Node, Edge
-│   │   ├── schema.py        # Schema SQLite
-│   │   └── store.py         # GraphStore CRUD
+│   │   ├── models.py        # Dataclasses Node, Edge, GraphStats
+│   │   ├── schema.py        # Schema SQLite v2 + migrações
+│   │   └── store.py         # GraphStore CRUD, FTS5, file_index
 │   ├── parser/
 │   │   ├── base.py          # Parser base abstrato
-│   │   ├── python.py        # Parser Python
-│   │   └── typescript.py    # Parser TS/JS
+│   │   ├── python.py        # Parser Python (Tree-sitter)
+│   │   └── typescript.py    # Parser TS/JS (Tree-sitter)
 │   ├── queries/
-│   │   ├── search.py        # Busca textual
+│   │   ├── search.py        # Busca textual e FTS5
 │   │   ├── trace.py         # Call graph
-│   │   └── impact.py        # Análise de impacto
+│   │   ├── impact.py        # Análise de impacto
+│   │   ├── analysis.py      # Código morto e hotspots
+│   │   └── export.py        # Export DOT/Mermaid/JSON/HTML + arquitetura
+│   ├── static/              # Assets do HTML export
+│   │   └── vendor/          # vis-network, etc.
 │   └── mcp/
-│       └── server.py        # Servidor MCP
+│       └── server.py        # Servidor MCP (8 tools)
 ├── tests/
 │   ├── conftest.py
+│   ├── test_cli.py
+│   ├── test_main.py
 │   ├── test_models.py
 │   ├── test_schema.py
 │   ├── test_store.py
+│   ├── test_store_extended.py
 │   ├── test_parser_base.py
 │   ├── test_parser_python.py
+│   ├── test_parser_python_extended.py
 │   ├── test_parser_typescript.py
+│   ├── test_parser_typescript_extended.py
 │   ├── test_indexer.py
+│   ├── test_indexer_extended.py
+│   ├── test_incremental.py
 │   ├── test_queries_search.py
 │   ├── test_queries_trace.py
-│   └── test_queries_impact.py
+│   ├── test_queries_impact.py
+│   ├── test_queries_extended.py
+│   ├── test_analysis.py
+│   ├── test_export.py
+│   ├── test_export_html.py
+│   ├── test_mcp_server.py
+│   ├── test_coverage_gaps.py
+│   └── test_schema.py
 ├── pyproject.toml
 ├── Makefile
 ├── AGENTS.md
