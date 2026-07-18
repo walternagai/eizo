@@ -78,6 +78,7 @@ def index_repository(
     store: GraphStore | None = None,
     force: bool = False,
     dry_run: bool = False,
+    quiet: bool = False,
 ) -> list[Path] | GraphStore:
     """Indexa um repositório inteiro no grafo de conhecimento.
 
@@ -90,6 +91,7 @@ def index_repository(
         force: Se True, reindexa todos os arquivos ignorando o cache.
         dry_run: Se True, apenas descobre e retorna a lista de arquivos que
             seriam indexados, sem persistir no banco.
+        quiet: Se True, suprime mensagens de console (útil para saída JSON).
 
     Returns:
         GraphStore populado quando dry_run=False; lista de Path quando dry_run=True.
@@ -104,7 +106,9 @@ def index_repository(
 
     parsers = _get_parsers()
     if not parsers:
-        console.print("[red]✗ Nenhum parser disponível. Instale tree-sitter-python e/ou tree-sitter-typescript.[/red]")
+        if not quiet:
+            console.print("[red]✗ Nenhum parser disponível.[/red]")
+            console.print("  Instale tree-sitter-python e/ou tree-sitter-typescript.")
         if dry_run:
             return []
         return store  # type: ignore[return-value]
@@ -127,7 +131,8 @@ def index_repository(
     files = [f for f in files if not _should_ignore(f)]
 
     if not files:
-        console.print("[yellow]⚠ Nenhum arquivo parseável encontrado.[/yellow]")
+        if not quiet:
+            console.print("[yellow]⚠ Nenhum arquivo parseável encontrado.[/yellow]")
         if dry_run:
             return []
         return store  # type: ignore[return-value]
@@ -158,14 +163,16 @@ def index_repository(
         return files_to_index
 
     if not files_to_index:
-        console.print(f"[green]✓ {len(files)} arquivo(s) já indexado(s), nada a fazer.[/green]")
-        console.print("  Use --rebuild para forçar reindexação completa.")
+        if not quiet:
+            console.print(f"[green]✓ {len(files)} arquivo(s) já indexado(s), nada a fazer.[/green]")
+            console.print("  Use --rebuild para forçar reindexação completa.")
         return store  # type: ignore[return-value]
 
     action = "Reindexando" if force else "Indexando"
-    console.print(f"[bold]{action} {len(files_to_index)} arquivo(s) em {repo_path}...[/bold]")
+    if not quiet:
+        console.print(f"[bold]{action} {len(files_to_index)} arquivo(s) em {repo_path}...[/bold]")
     logger.info("%s %d arquivo(s) em %s", action, len(files_to_index), repo_path)
-    if skipped > 0:
+    if skipped > 0 and not quiet:
         console.print(f"[dim]  {skipped} arquivo(s) inalterado(s) pulado(s)[/dim]")
         logger.info("%d arquivo(s) inalterado(s) pulado(s)", skipped)
 
@@ -176,6 +183,7 @@ def index_repository(
         TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
         TimeElapsedColumn(),
         console=console,
+        disable=quiet,
     )
 
     total_nodes = 0
@@ -219,18 +227,19 @@ def index_repository(
 
     # Resumo
     stats = store.get_stats() if store is not None else None
-    console.print("\n[bold green]✓ Indexação concluída![/bold green]")
-    console.print(f"  Arquivos indexados: {len(files_to_index)}")
-    console.print(f"  Arquivos pulados: {skipped}")
-    if stats:
-        console.print(f"  Total no grafo: {stats.total_files} arquivos")
-        console.print(f"  Nós: {stats.total_nodes}")
-        console.print(f"  Arestas: {stats.total_edges}")
-        console.print(f"  Linguagens: {', '.join(stats.by_language.keys())}")
-        console.print(f"  Tamanho do banco: {stats.db_size_bytes / 1024:.1f} KB")
+    if not quiet:
+        console.print("\n[bold green]✓ Indexação concluída![/bold green]")
+        console.print(f"  Arquivos indexados: {len(files_to_index)}")
+        console.print(f"  Arquivos pulados: {skipped}")
+        if stats:
+            console.print(f"  Total no grafo: {stats.total_files} arquivos")
+            console.print(f"  Nós: {stats.total_nodes}")
+            console.print(f"  Arestas: {stats.total_edges}")
+            console.print(f"  Linguagens: {', '.join(stats.by_language.keys())}")
+            console.print(f"  Tamanho do banco: {stats.db_size_bytes / 1024:.1f} KB")
     logger.info("Indexação concluída: %d arquivos, %d nós, %d arestas", len(files_to_index), total_nodes, total_edges)
 
-    if errors:
+    if errors and not quiet:
         console.print(f"\n[yellow]⚠ {len(errors)} erro(s) durante indexação:[/yellow]")
         for file_path, error in errors[:5]:
             console.print(f"  [red]{file_path}: {error}[/red]")

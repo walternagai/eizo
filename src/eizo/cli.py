@@ -417,13 +417,14 @@ def init(
         return
 
     if rebuild:
-        console.print("[yellow]Reconstruindo grafo do zero...[/yellow]")
+        if ctx.obj.get("format") != "json":
+            console.print("[yellow]Reconstruindo grafo do zero...[/yellow]")
         logger.info("Limpando grafo existente em %s", store.db_path)
         store.clear_all()
         force = True
 
     logger.info("Iniciando indexação de %s", effective_path)
-    index_repository(effective_path, store, force=force)
+    index_repository(effective_path, store, force=force, quiet=ctx.obj.get("format") == "json")
     logger.info("Indexação concluída")
 
     if ctx.obj.get("format") == "json":
