@@ -52,6 +52,20 @@ make coverage    # pytest --cov=src/eizo --cov-report=term-missing
   your shell config file to install).
 - Completion variables use the prefix `_EIZO_COMPLETE`.
 
+## Environment variables
+
+- Supported variables:
+  - `EIZO_OUTPUT_FORMAT` — overrides `--output-format` (`table` or `json`).
+  - `EIZO_NO_COLOR` — disables colors when set to `1`, `true`, `yes` or `on`.
+  - `NO_COLOR` — global standard; also disables colors when set.
+  - `EIZO_REPO` — default value for `--repo`/`-C`.
+  - `EIZO_CONFIG` — alternative path to the config JSON file.
+  - `EIZO_LIMIT` — default for `--limit` in `search`/`dead`/`hotspots`.
+  - `EIZO_DEPTH` — default for `--depth` in `trace`/`impact`.
+  - `EIZO_MIN_REFS` — default for `--min-refs` in `hotspots`.
+  - `EIZO_FULL_TEXT` — default for `--full-text` in `search`.
+- Merge priority: **CLI args > env vars > config file > Click defaults**.
+
 ## Architecture
 
 ```

@@ -16,6 +16,7 @@ Comandos:
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -98,16 +99,37 @@ def _node_to_dict(node: Any) -> dict[str, Any]:
     }
 
 
-def _load_config(repo_path: Path, config_path: Path | None) -> dict[str, Any]:
-    """Carrega configuração JSON de .eizo/config.json ou caminho alternativo.
+def _env_value(key: str) -> str | None:
+    """Retorna valor de variável de ambiente EIZO_<KEY> se definida."""
+    return os.environ.get(f"EIZO_{key.upper()}")
 
-    Prioridade de busca: --config (se fornecido) > .eizo/config.json.
+
+def _env_bool(key: str) -> bool | None:
+    """Interpreta variável de ambiente como booleano.
+
+    Valores considerados True: 1, true, yes, on (case-insensitive).
+    Qualquer outro valor não-vazio é False.
+    """
+    value = _env_value(key)
+    if value is None:
+        return None
+    return value.lower() in {"1", "true", "yes", "on"}
+
+
+def _load_config(repo_path: Path, config_path: Path | None) -> dict[str, Any]:
+    """Carrega configuração JSON de --config, EIZO_CONFIG ou .eizo/config.json.
+
+    Prioridade de busca:
+      --config > EIZO_CONFIG > .eizo/config.json
     Valores inválidos geram aviso e retornam dict vazio.
     """
     candidates: list[Path] = []
     if config_path:
         candidates.append(config_path)
     else:
+        env_config = _env_value("config")
+        if env_config:
+            candidates.append(Path(env_config))
         candidates.append(repo_path / ".eizo" / "config.json")
 
     for candidate in candidates:
@@ -128,30 +150,61 @@ def _merge_config(
     command_defaults: dict[str, dict[str, Any]] | None = None,
     command_values: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Carrega config e retorna valores finais (CLI > config > defaults).
+    """Carrega config e retorna valores finais (CLI > env > config > defaults).
 
     Para cada chave, se o valor passado pelo CLI for igual ao default do
     Click e o config.json tiver outro valor, usa o do config. Campos
     explicitamente passados como flags globais (--output-format, --no-color)
-    são respeitados e nunca sobrescritos pelo config.
+    são respeitados e nunca sobrescritos pelo config/env.
     """
     repo_path: str | None = command_values.get("repo_path") if command_values else None
     if repo_path is None:
         repo_path = "."
+
+    # EIZO_REPO só é aplicado se --repo não foi explicitado (valor igual ao default)
+    env_repo = _env_value("repo")
+    if env_repo and repo_path == ".":
+        repo_path = env_repo
+
     config_path: Path | None = ctx.obj.get("config_path")
     cfg = _load_config(Path(repo_path).resolve(), config_path)
 
-    # Campos globais
-    if "output_format" in cfg and not ctx.obj.get("format_explicit"):
-        ctx.obj["format"] = cfg["output_format"]
-    if "no_color" in cfg and not ctx.obj.get("no_color_explicit") and cfg["no_color"]:
-        console._color_system = None
+    # Campos globais (CLI > env > config)
+    if not ctx.obj.get("format_explicit"):
+        if "output_format" in cfg:
+            ctx.obj["format"] = cfg["output_format"]
+        env_format = _env_value("output_format")
+        if env_format:
+            ctx.obj["format"] = env_format
+
+    if not ctx.obj.get("no_color_explicit"):
+        if "no_color" in cfg and cfg["no_color"]:
+            console._color_system = None
+        env_no_color = _env_bool("no_color")
+        if env_no_color is True or os.environ.get("NO_COLOR"):
+            console._color_system = None
 
     merged: dict[str, Any] = {}
     if command_values and command_defaults:
         for key, value in command_values.items():
             defaults = command_defaults.get(key)
-            if defaults is None or value != defaults["default"]:
+            env_val: Any = None
+            if key == "repo_path" and repo_path != ".":
+                env_val = repo_path
+            elif key in {"limit", "depth", "min_refs", "full_text"}:
+                env_val = _env_value(key)
+                if env_val is not None and key in {"limit", "depth", "min_refs"}:
+                    try:
+                        env_val = int(env_val)
+                    except ValueError:
+                        env_val = None
+                if env_val is not None and key == "full_text":
+                    env_val = env_val.lower() in {"1", "true", "yes", "on"}
+
+            default_value = defaults["default"] if defaults else None
+            if env_val is not None and value == default_value:
+                merged[key] = env_val
+            elif defaults is None or value != default_value:
                 merged[key] = value
             elif key in cfg:
                 merged[key] = cfg[key]
@@ -159,6 +212,8 @@ def _merge_config(
                 merged[key] = value
     elif command_values:
         merged = command_values.copy()
+        if "repo_path" in merged and repo_path != "." and merged["repo_path"] == ".":
+            merged["repo_path"] = repo_path
 
     return merged
 
@@ -181,6 +236,12 @@ def _install_completion(shell: str) -> str:
 
 
 SUPPORTED_SHELLS = ("bash", "zsh", "fish")
+
+
+def _is_explicit(ctx: click.Context, param_name: str) -> bool:
+    """Retorna True se o parâmetro foi passado explicitamente via CLI."""
+    source = ctx.get_parameter_source(param_name)
+    return source == click.core.ParameterSource.COMMANDLINE
 
 
 @click.group(invoke_without_command=True)
@@ -246,8 +307,9 @@ def main(
 
     ctx.ensure_object(dict)
     ctx.obj["format"] = output_format
-    ctx.obj["format_explicit"] = output_format != "table"
-    ctx.obj["no_color_explicit"] = no_color
+    ctx.obj["format_explicit"] = _is_explicit(ctx, "output_format")
+    ctx.obj["no_color_explicit"] = _is_explicit(ctx, "no_color") or no_color
+    ctx.obj["config_path_explicit"] = _is_explicit(ctx, "config_path")
     ctx.obj["config_path"] = Path(config_path) if config_path else None
     ctx.obj["config"] = {}
     global _force_color
@@ -331,6 +393,7 @@ def search(
         },
         command_values={"limit": limit, "full_text": full_text, "repo_path": repo_path},
     )
+    repo_path = cfg.get("repo_path", repo_path)
     store = GraphStore(Path(repo_path).resolve())
     results = search_symbols(
         store, query,
@@ -386,6 +449,7 @@ def trace(ctx: click.Context, symbol: str, direction: str, depth: int, repo_path
         command_defaults={"depth": {"default": 3}},
         command_values={"depth": depth, "repo_path": repo_path},
     )
+    repo_path = cfg.get("repo_path", repo_path)
     repo = Path(repo_path).resolve()
     store = GraphStore(repo)
     result = trace_call_path(store, symbol, direction=direction, max_depth=cfg["depth"])
@@ -511,6 +575,7 @@ def impact(ctx: click.Context, symbol: str, depth: int, repo_path: str) -> None:
         command_defaults={"depth": {"default": 3}},
         command_values={"depth": depth, "repo_path": repo_path},
     )
+    repo_path = cfg.get("repo_path", repo_path)
     store = GraphStore(Path(repo_path).resolve())
     result = analyze_impact(store, symbol, max_depth=cfg["depth"])
 
@@ -557,8 +622,8 @@ def _build_impact_tree(tree: Tree, chain: list[dict[str, Any]]) -> None:
 @click.pass_context
 def arch(ctx: click.Context, repo_path: str) -> None:
     """Mostra visão arquitetural do repositório."""
-    _merge_config(ctx, command_values={"repo_path": repo_path})
-    _render_arch(ctx, repo_path)
+    cfg = _merge_config(ctx, command_values={"repo_path": repo_path})
+    _render_arch(ctx, cfg.get("repo_path", repo_path))
 
 
 def _render_arch(ctx: click.Context, repo_path: str, output: str | None = None) -> None:
@@ -647,7 +712,8 @@ def mcp(port: int, transport: str, repo_path: str) -> None:
 @click.pass_context
 def status(ctx: click.Context, repo_path: str) -> None:
     """Mostra estatísticas do grafo de conhecimento."""
-    _merge_config(ctx, command_values={"repo_path": repo_path})
+    cfg = _merge_config(ctx, command_values={"repo_path": repo_path})
+    repo_path = cfg.get("repo_path", repo_path)
     store = GraphStore(Path(repo_path).resolve())
     stats = store.get_stats()
 
@@ -703,6 +769,7 @@ def dead(ctx: click.Context, repo_path: str, entrypoints: tuple[str, ...], limit
         command_defaults={"limit": {"default": 100}},
         command_values={"limit": limit, "repo_path": repo_path},
     )
+    repo_path = cfg.get("repo_path", repo_path)
     store = GraphStore(Path(repo_path).resolve())
     eps = frozenset(entrypoints) if entrypoints else None
     results = find_dead_code(store, entrypoints=eps, limit=cfg["limit"])
@@ -761,6 +828,7 @@ def hotspots(
         },
         command_values={"limit": limit, "min_refs": min_refs, "repo_path": repo_path},
     )
+    repo_path = cfg.get("repo_path", repo_path)
     store = GraphStore(Path(repo_path).resolve())
     results = find_hotspots(store, limit=cfg["limit"], min_references=cfg["min_refs"])
 
@@ -883,5 +951,5 @@ def architecture(
     Quando usado sem -o, mostra a mesma visão arquitetural de arch.
     Com -o, exporta o diagrama Mermaid de arquitetura para o arquivo.
     """
-    _merge_config(ctx, command_values={"repo_path": repo_path})
-    _render_arch(ctx, repo_path, output=output)
+    cfg = _merge_config(ctx, command_values={"repo_path": repo_path})
+    _render_arch(ctx, cfg.get("repo_path", repo_path), output=output)

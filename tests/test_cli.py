@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 from click.testing import CliRunner
@@ -324,6 +325,127 @@ class TestCliCompletion:
         runner = CliRunner()
         result = runner.invoke(main, ["--show-completion", "invalid"])
         assert result.exit_code != 0
+
+
+class TestCliEnvVars:
+    """Testes para variáveis de ambiente EIZO_* e NO_COLOR."""
+
+    def test_env_output_format(self, tmp_path: Path, monkeypatch: Any) -> None:
+        """EIZO_OUTPUT_FORMAT muda saída para JSON."""
+        repo = Path(tmp_path)
+        (repo / "test.py").write_text("def foo(): pass\n")
+        store = GraphStore(repo)
+        index_repository(repo, store)
+
+        monkeypatch.setenv("EIZO_OUTPUT_FORMAT", "json")
+        runner = CliRunner()
+        result = runner.invoke(main, ["status", "--repo", str(repo)])
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert "total_nodes" in parsed
+
+    def test_env_no_color(self, tmp_path: Path, monkeypatch: Any) -> None:
+        """EIZO_NO_COLOR=1 desativa cores."""
+        repo = Path(tmp_path)
+        (repo / "test.py").write_text("def foo(): pass\n")
+        store = GraphStore(repo)
+        index_repository(repo, store)
+
+        monkeypatch.setenv("EIZO_NO_COLOR", "1")
+        runner = CliRunner()
+        result = runner.invoke(main, ["status", "--repo", str(repo)])
+        assert result.exit_code == 0
+        assert "Status do Grafo" in result.output
+        assert "\x1b[" not in result.output
+
+    def test_env_no_color_global(self, tmp_path: Path, monkeypatch: Any) -> None:
+        """NO_COLOR (global) também desativa cores."""
+        repo = Path(tmp_path)
+        (repo / "test.py").write_text("def foo(): pass\n")
+        store = GraphStore(repo)
+        index_repository(repo, store)
+
+        monkeypatch.setenv("NO_COLOR", "1")
+        runner = CliRunner()
+        result = runner.invoke(main, ["status", "--repo", str(repo)])
+        assert result.exit_code == 0
+        assert "\x1b[" not in result.output
+
+    def test_env_repo(self, tmp_path: Path, monkeypatch: Any) -> None:
+        """EIZO_REPO define o repo padrão."""
+        repo = Path(tmp_path)
+        (repo / "test.py").write_text("def foo(): pass\n")
+        store = GraphStore(repo)
+        index_repository(repo, store)
+
+        monkeypatch.setenv("EIZO_REPO", str(repo))
+        runner = CliRunner()
+        result = runner.invoke(main, ["--output-format", "json", "status"])
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert parsed["total_nodes"] == 2
+
+    def test_env_config(self, tmp_path: Path, monkeypatch: Any) -> None:
+        """EIZO_CONFIG aponta para arquivo de config alternativo."""
+        repo = Path(tmp_path)
+        (repo / "test.py").write_text("def foo(): pass\n")
+        store = GraphStore(repo)
+        index_repository(repo, store)
+
+        alt_config = tmp_path / "env.json"
+        alt_config.write_text(json.dumps({"output_format": "json"}))
+
+        monkeypatch.setenv("EIZO_CONFIG", str(alt_config))
+        runner = CliRunner()
+        result = runner.invoke(main, ["status", "--repo", str(repo)])
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert "total_nodes" in parsed
+
+    def test_env_cli_overrides_env(self, tmp_path: Path, monkeypatch: Any) -> None:
+        """CLI explícito sobrescreve variável de ambiente."""
+        repo = Path(tmp_path)
+        (repo / "test.py").write_text("def foo(): pass\n")
+        store = GraphStore(repo)
+        index_repository(repo, store)
+
+        monkeypatch.setenv("EIZO_OUTPUT_FORMAT", "json")
+        runner = CliRunner()
+        result = runner.invoke(
+            main, ["--output-format", "table", "status", "--repo", str(repo)]
+        )
+        assert result.exit_code == 0
+        assert "Status do Grafo" in result.output
+
+    def test_env_limit(self, tmp_path: Path, monkeypatch: Any) -> None:
+        """EIZO_LIMIT define limite de resultados do search."""
+        repo = Path(tmp_path)
+        for name in ("a", "b", "c"):
+            (repo / f"{name}.py").write_text(f"def {name}(): pass\n")
+        store = GraphStore(repo)
+        index_repository(repo, store)
+
+        monkeypatch.setenv("EIZO_LIMIT", "2")
+        runner = CliRunner()
+        result = runner.invoke(main, ["search", "a", "--repo", str(repo)])
+        assert result.exit_code == 0
+        assert "2 resultado(s)" in result.output
+
+    def test_env_invalid_limit_ignored(self, tmp_path: Path, monkeypatch: Any) -> None:
+        """EIZO_LIMIT inválido cai no default do Click sem erro."""
+        repo = Path(tmp_path)
+        for name in ("a", "b", "c"):
+            (repo / f"{name}.py").write_text(f"def {name}(): pass\n")
+        store = GraphStore(repo)
+        index_repository(repo, store)
+
+        monkeypatch.setenv("EIZO_LIMIT", "not-a-number")
+        runner = CliRunner()
+        result = runner.invoke(main, ["search", "a", "--repo", str(repo)])
+        assert result.exit_code == 0
+        # Default do search é 20; como a query 'a' retorna 2 resultados,
+        # basta confirmar que não houve erro e há resultados.
+        assert "resultado(s)" in result.output
 
 
 class TestCliArchitecture:
