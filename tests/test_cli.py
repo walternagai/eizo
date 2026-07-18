@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from click.testing import CliRunner
@@ -46,7 +47,7 @@ class TestCliSearch:
     def test_search_no_results(self, tmp_path: Path) -> None:
         """Search sem resultados deve mostrar mensagem."""
         runner = CliRunner()
-        result = runner.invoke(main, ["search", "nonexistent", "--path", str(tmp_path)])
+        result = runner.invoke(main, ["search", "nonexistent", "--repo", str(tmp_path)])
         assert result.exit_code == 0
         assert "Nenhum resultado" in result.output
 
@@ -59,7 +60,7 @@ class TestCliSearch:
         index_repository(repo, store)
 
         runner = CliRunner()
-        result = runner.invoke(main, ["search", "hello", "--path", str(repo)])
+        result = runner.invoke(main, ["search", "hello", "--repo", str(repo)])
         assert result.exit_code == 0
         assert "hello" in result.output
 
@@ -73,7 +74,7 @@ class TestCliSearch:
         runner = CliRunner()
         result = runner.invoke(main, [
             "search", "foo", "--kind", "function",
-            "--language", "python", "--path", str(repo),
+            "--language", "python", "--repo", str(repo),
         ])
         assert result.exit_code == 0
         assert "foo" in result.output
@@ -90,11 +91,11 @@ class TestCliSearch:
 
         runner = CliRunner()
         # Sem --full-text, "pagamento" não bate com o nome "process".
-        no_fts = runner.invoke(main, ["search", "pagamento", "--path", str(repo)])
+        no_fts = runner.invoke(main, ["search", "pagamento", "--repo", str(repo)])
         assert "Nenhum resultado" in no_fts.output
 
         result = runner.invoke(
-            main, ["search", "pagamento", "--full-text", "--path", str(repo)]
+            main, ["search", "pagamento", "--full-text", "--repo", str(repo)]
         )
         assert result.exit_code == 0
         assert "process" in result.output
@@ -106,7 +107,7 @@ class TestCliTrace:
     def test_trace_not_found(self, tmp_path: Path) -> None:
         """Trace de símbolo inexistente."""
         runner = CliRunner()
-        result = runner.invoke(main, ["trace", "nonexistent", "--path", str(tmp_path)])
+        result = runner.invoke(main, ["trace", "nonexistent", "--repo", str(tmp_path)])
         assert result.exit_code == 0
         assert "não encontrado" in result.output
 
@@ -118,7 +119,7 @@ class TestCliTrace:
         index_repository(repo, store)
 
         runner = CliRunner()
-        result = runner.invoke(main, ["trace", "caller", "--path", str(repo)])
+        result = runner.invoke(main, ["trace", "caller", "--repo", str(repo)])
         assert result.exit_code == 0
         assert "Call graph" in result.output
 
@@ -130,7 +131,7 @@ class TestCliTrace:
         index_repository(repo, store)
 
         runner = CliRunner()
-        result = runner.invoke(main, ["trace", "loner", "--path", str(repo)])
+        result = runner.invoke(main, ["trace", "loner", "--repo", str(repo)])
         assert result.exit_code == 0
         assert "Nenhum caller encontrado" in result.output
         assert "Nenhuma callee encontrada" in result.output
@@ -143,7 +144,7 @@ class TestCliTrace:
         index_repository(repo, store)
 
         runner = CliRunner()
-        result = runner.invoke(main, ["trace", "caller", "--path", str(repo)])
+        result = runner.invoke(main, ["trace", "caller", "--repo", str(repo)])
         assert result.exit_code == 0
         assert "caller(s)" in result.output
         assert "callee(s)" in result.output
@@ -159,7 +160,7 @@ class TestCliTrace:
         index_repository(repo, store)
 
         runner = CliRunner()
-        result = runner.invoke(main, ["trace", "foo", "--path", str(repo)])
+        result = runner.invoke(main, ["trace", "foo", "--repo", str(repo)])
         assert result.exit_code == 0
         assert "Faz algo importante" in result.output
 
@@ -184,7 +185,7 @@ class TestCliTrace:
         ])
 
         runner = CliRunner()
-        result = runner.invoke(main, ["trace", "a", "--path", str(repo), "--depth", "5"])
+        result = runner.invoke(main, ["trace", "a", "--repo", str(repo), "--depth", "5"])
         assert result.exit_code == 0
         assert "(cycle)" in result.output
 
@@ -210,7 +211,7 @@ class TestCliTrace:
 
         runner = CliRunner()
         result = runner.invoke(
-            main, ["trace", "helper", "--direction", "incoming", "--path", str(repo)]
+            main, ["trace", "helper", "--direction", "incoming", "--repo", str(repo)]
         )
         assert result.exit_code == 0
         assert "Quem chama" in result.output
@@ -224,7 +225,7 @@ class TestCliImpact:
     def test_impact_not_found(self, tmp_path: Path) -> None:
         """Impact de símbolo inexistente."""
         runner = CliRunner()
-        result = runner.invoke(main, ["impact", "nonexistent", "--path", str(tmp_path)])
+        result = runner.invoke(main, ["impact", "nonexistent", "--repo", str(tmp_path)])
         assert result.exit_code == 0
         assert "não encontrado" in result.output
 
@@ -236,7 +237,7 @@ class TestCliImpact:
         index_repository(repo, store)
 
         runner = CliRunner()
-        result = runner.invoke(main, ["impact", "helper", "--path", str(repo)])
+        result = runner.invoke(main, ["impact", "helper", "--repo", str(repo)])
         assert result.exit_code == 0
         assert "Análise de impacto" in result.output
 
@@ -247,7 +248,7 @@ class TestCliArch:
     def test_arch_empty(self, tmp_path: Path) -> None:
         """Arch em repositório vazio."""
         runner = CliRunner()
-        result = runner.invoke(main, ["arch", "--path", str(tmp_path)])
+        result = runner.invoke(main, ["arch", "--repo", str(tmp_path)])
         assert result.exit_code == 0
         assert "Grafo vazio" in result.output
 
@@ -259,7 +260,7 @@ class TestCliArch:
         index_repository(repo, store)
 
         runner = CliRunner()
-        result = runner.invoke(main, ["arch", "--path", str(repo)])
+        result = runner.invoke(main, ["arch", "--repo", str(repo)])
         assert result.exit_code == 0
         assert "Visão Arquitetural" in result.output
 
@@ -270,7 +271,7 @@ class TestCliStatus:
     def test_status_empty(self, tmp_path: Path) -> None:
         """Status em repositório vazio."""
         runner = CliRunner()
-        result = runner.invoke(main, ["status", "--path", str(tmp_path)])
+        result = runner.invoke(main, ["status", "--repo", str(tmp_path)])
         assert result.exit_code == 0
         assert "Grafo vazio" in result.output
 
@@ -282,7 +283,7 @@ class TestCliStatus:
         index_repository(repo, store)
 
         runner = CliRunner()
-        result = runner.invoke(main, ["status", "--path", str(repo)])
+        result = runner.invoke(main, ["status", "--repo", str(repo)])
         assert result.exit_code == 0
         assert "Status do Grafo" in result.output
 
@@ -296,3 +297,151 @@ class TestCliVersion:
         result = runner.invoke(main, ["--version"])
         assert result.exit_code == 0
         assert "0.1.0" in result.output
+
+
+class TestCliArchitecture:
+    """Testes para o comando 'eizo architecture' (alias de 'arch')."""
+
+    def test_architecture_empty(self, tmp_path: Path) -> None:
+        """architecture em store vazio mostra mensagem."""
+        runner = CliRunner()
+        result = runner.invoke(main, ["architecture", "--repo", str(tmp_path)])
+        assert result.exit_code == 0
+        assert "Grafo vazio" in result.output
+
+    def test_architecture_with_data(self, tmp_path: Path) -> None:
+        """architecture mostra visão arquitetural (tabela)."""
+        repo = Path(tmp_path)
+        (repo / "test.py").write_text("def foo(): pass\n")
+        store = GraphStore(repo)
+        index_repository(repo, store)
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["architecture", "--repo", str(repo)])
+        assert result.exit_code == 0
+        assert "Visão Arquitetural" in result.output
+
+    def test_architecture_to_file(self, tmp_path: Path) -> None:
+        """architecture -o escreve arquivo Mermaid."""
+        repo = Path(tmp_path)
+        (repo / "test.py").write_text("def foo(): pass\n")
+        store = GraphStore(repo)
+        index_repository(repo, store)
+
+        output_file = tmp_path / "arch.mmd"
+        runner = CliRunner()
+        result = runner.invoke(
+            main, ["architecture", "-o", str(output_file), "--repo", str(repo)]
+        )
+        assert result.exit_code == 0
+        assert "exportado" in result.output
+        assert output_file.exists()
+        assert "graph TD" in output_file.read_text()
+
+    def test_architecture_json_format(self, tmp_path: Path) -> None:
+        """architecture --output-format json retorna stats em JSON."""
+        repo = Path(tmp_path)
+        (repo / "test.py").write_text("def foo(): pass\n")
+        store = GraphStore(repo)
+        index_repository(repo, store)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main, ["--output-format", "json", "architecture", "--repo", str(repo)]
+        )
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert "total_nodes" in parsed
+
+
+class TestCliConfig:
+    """Testes para arquivo de configuração .eizo/config.json e --config."""
+
+    def test_config_output_format_from_eizo_config_json(self, tmp_path: Path) -> None:
+        """config.json com output_format='json' muda saída de status para JSON."""
+        repo = Path(tmp_path)
+        (repo / "test.py").write_text("def foo(): pass\n")
+        store = GraphStore(repo)
+        index_repository(repo, store)
+
+        eizo_dir = repo / ".eizo"
+        eizo_dir.mkdir(exist_ok=True)
+        (eizo_dir / "config.json").write_text(json.dumps({"output_format": "json"}))
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["status", "--repo", str(repo)])
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert "total_nodes" in parsed
+
+    def test_config_limit_from_eizo_config_json(self, tmp_path: Path) -> None:
+        """config.json com limit é aplicado ao search."""
+        repo = Path(tmp_path)
+        for name in ("a", "b", "c"):
+            (repo / f"{name}.py").write_text(f"def {name}(): pass\n")
+        store = GraphStore(repo)
+        index_repository(repo, store)
+
+        eizo_dir = repo / ".eizo"
+        eizo_dir.mkdir(exist_ok=True)
+        (eizo_dir / "config.json").write_text(json.dumps({"limit": 2}))
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["search", "a", "--repo", str(repo)])
+        assert result.exit_code == 0
+        # Apenas 2 resultados devido ao limit do config
+        assert "2 resultado(s)" in result.output
+
+    def test_config_cli_overrides_config(self, tmp_path: Path) -> None:
+        """CLI explícito (--output-format json) sobrescreve config.json table."""
+        repo = Path(tmp_path)
+        (repo / "test.py").write_text("def foo(): pass\n")
+        store = GraphStore(repo)
+        index_repository(repo, store)
+
+        eizo_dir = repo / ".eizo"
+        eizo_dir.mkdir(exist_ok=True)
+        (eizo_dir / "config.json").write_text(json.dumps({"output_format": "table"}))
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main, ["--output-format", "json", "status", "--repo", str(repo)]
+        )
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert "total_nodes" in parsed
+
+    def test_config_alternative_path(self, tmp_path: Path) -> None:
+        """--config aponta para arquivo fora do repo."""
+        repo = Path(tmp_path)
+        (repo / "test.py").write_text("def foo(): pass\n")
+        store = GraphStore(repo)
+        index_repository(repo, store)
+
+        alt_config = tmp_path / "alt.json"
+        alt_config.write_text(json.dumps({"output_format": "json"}))
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main, ["--config", str(alt_config), "status", "--repo", str(repo)]
+        )
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert "total_nodes" in parsed
+
+    def test_config_invalid_json_warns_and_ignores(self, tmp_path: Path) -> None:
+        """config.json inválido gera aviso e usa defaults."""
+        repo = Path(tmp_path)
+        (repo / "test.py").write_text("def foo(): pass\n")
+        store = GraphStore(repo)
+        index_repository(repo, store)
+
+        eizo_dir = repo / ".eizo"
+        eizo_dir.mkdir(exist_ok=True)
+        (eizo_dir / "config.json").write_text("not-json")
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["status", "--repo", str(repo)])
+        assert result.exit_code == 0
+        assert "Aviso: config inválido" in result.output
+        assert "Status do Grafo" in result.output

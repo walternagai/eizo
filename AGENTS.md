@@ -19,6 +19,31 @@ make coverage    # pytest --cov=src/eizo --cov-report=term-missing
 - `python -m eizo`: `eizo/__main__.py` → `cli.main()`
 - `eizo.mcp.server.serve_mcp()`: FastMCP server, invoked via `eizo mcp`
 
+## CLI conventions
+
+- Global output format: `--output-format [table|json]` (default `table`).
+  Do **not** use `--format`; it was removed to avoid collision with the
+  `eizo export <format>` subcommand argument.
+- Repository path: `--repo <path>` or short `-C <path>` (like `git -C`).
+  The old `--path` option was removed.
+- Numeric options are validated: `--depth 1..10`, `--limit >=1`,
+  `--min-refs >=1`, `--port 1..65535`.
+- `architecture` is an alias for `arch` (kept for compatibility).
+
+## Configuration file
+
+- Optional `{repo}/.eizo/config.json` loaded automatically.
+- Global `--config <path>` overrides the default location.
+- Merge priority: **CLI args > config file > Click defaults**.
+- Supported fields (all optional):
+  - `"output_format"`: `"table"` or `"json"`.
+  - `"no_color"`: `true` or `false`.
+  - `"limit"`: integer (`>= 1`), used by `search`/`dead`/`hotspots`.
+  - `"full_text"`: boolean, used by `search`.
+  - `"depth"`: integer (`1..10`), used by `trace`/`impact`.
+  - `"min_refs"`: integer (`>= 1`), used by `hotspots`.
+- Invalid JSON prints a warning and falls back to defaults.
+
 ## Architecture
 
 ```

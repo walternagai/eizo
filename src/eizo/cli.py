@@ -16,6 +16,7 @@ Comandos:
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -27,12 +28,19 @@ from rich.tree import Tree
 from eizo.graph.store import GraphStore
 from eizo.indexer import index_repository
 from eizo.queries.analysis import find_dead_code, find_hotspots
-from eizo.queries.export import export_dot, export_html, export_json, export_mermaid
+from eizo.queries.export import (
+    export_architecture_mermaid,
+    export_dot,
+    export_html,
+    export_json,
+    export_mermaid,
+)
 from eizo.queries.impact import analyze_impact
 from eizo.queries.search import search_symbols
 from eizo.queries.trace import trace_call_path
 
 console = Console()
+_force_color: bool | None = None
 
 
 def _emit_json(data: Any) -> None:
@@ -40,8 +48,42 @@ def _emit_json(data: Any) -> None:
     click.echo(json.dumps(data, indent=2, default=str))
 
 
+def _repo_option() -> Callable[..., Any]:
+    """Retorna decorator Click para a opção --repo (alias -C)."""
+    return click.option(
+        "--repo",
+        "-C",
+        "repo_path",
+        default=".",
+        help="Caminho do repositório",
+    )
+
+
+def _depth_option(default: int = 3) -> Callable[..., Any]:
+    """Retorna decorator Click para --depth com validação 1..10."""
+    return click.option(
+        "--depth",
+        default=default,
+        type=click.IntRange(min=1, max=10),
+        help="Profundidade máxima",
+    )
+
+
+def _limit_option(
+    default: int = 20,
+    help_text: str = "Limite de resultados",
+) -> Callable[..., Any]:
+    """Retorna decorator Click para --limit com validação >=1."""
+    return click.option(
+        "--limit",
+        default=default,
+        type=click.IntRange(min=1),
+        help=help_text,
+    )
+
+
 def _node_to_dict(node: Any) -> dict[str, Any]:
-    """Converte Node para dict serializável (para --format json)."""
+    """Converte Node para dict serializável (para --output-format json)."""
     return {
         "id": node.id,
         "name": node.name,
@@ -55,17 +97,101 @@ def _node_to_dict(node: Any) -> dict[str, Any]:
     }
 
 
+def _load_config(repo_path: Path, config_path: Path | None) -> dict[str, Any]:
+    """Carrega configuração JSON de .eizo/config.json ou caminho alternativo.
+
+    Prioridade de busca: --config (se fornecido) > .eizo/config.json.
+    Valores inválidos geram aviso e retornam dict vazio.
+    """
+    candidates: list[Path] = []
+    if config_path:
+        candidates.append(config_path)
+    else:
+        candidates.append(repo_path / ".eizo" / "config.json")
+
+    for candidate in candidates:
+        if candidate.exists():
+            try:
+                raw = json.loads(candidate.read_text(encoding="utf-8"))
+                if isinstance(raw, dict):
+                    return raw
+            except json.JSONDecodeError:
+                console.print(
+                    f"[yellow]Aviso: config inválido em {candidate} — ignorado.[/yellow]"
+                )
+    return {}
+
+
+def _merge_config(
+    ctx: click.Context,
+    command_defaults: dict[str, dict[str, Any]] | None = None,
+    command_values: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Carrega config e retorna valores finais (CLI > config > defaults).
+
+    Para cada chave, se o valor passado pelo CLI for igual ao default do
+    Click e o config.json tiver outro valor, usa o do config. Campos
+    explicitamente passados como flags globais (--output-format, --no-color)
+    são respeitados e nunca sobrescritos pelo config.
+    """
+    repo_path: str | None = command_values.get("repo_path") if command_values else None
+    if repo_path is None:
+        repo_path = "."
+    config_path: Path | None = ctx.obj.get("config_path")
+    cfg = _load_config(Path(repo_path).resolve(), config_path)
+
+    # Campos globais
+    if "output_format" in cfg and not ctx.obj.get("format_explicit"):
+        ctx.obj["format"] = cfg["output_format"]
+    if "no_color" in cfg and not ctx.obj.get("no_color_explicit") and cfg["no_color"]:
+        console._color_system = None
+
+    merged: dict[str, Any] = {}
+    if command_values and command_defaults:
+        for key, value in command_values.items():
+            defaults = command_defaults.get(key)
+            if defaults is None or value != defaults["default"]:
+                merged[key] = value
+            elif key in cfg:
+                merged[key] = cfg[key]
+            else:
+                merged[key] = value
+    elif command_values:
+        merged = command_values.copy()
+
+    return merged
+
+
 @click.group()
 @click.version_option(version="0.1.0", prog_name="eizo")
 @click.option(
-    "--format",
+    "--output-format",
     "output_format",
     type=click.Choice(["table", "json"]),
     default="table",
     help="Formato de saída: 'table' (padrão, rich) ou 'json' (para piping)",
 )
+@click.option(
+    "--no-color",
+    "no_color",
+    is_flag=True,
+    default=False,
+    help="Desativa cores na saída (útil para CI ou piping)",
+)
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(exists=True, dir_okay=False),
+    default=None,
+    help="Caminho alternativo para arquivo de configuração JSON",
+)
 @click.pass_context
-def main(ctx: click.Context, output_format: str) -> None:
+def main(
+    ctx: click.Context,
+    output_format: str,
+    no_color: bool,
+    config_path: str | None,
+) -> None:
     """映像 — Codebase Knowledge Graph CLI.
 
     Parseia codebases com Tree-sitter, constrói grafo de conhecimento
@@ -73,9 +199,20 @@ def main(ctx: click.Context, output_format: str) -> None:
     """
     ctx.ensure_object(dict)
     ctx.obj["format"] = output_format
+    ctx.obj["format_explicit"] = output_format != "table"
+    ctx.obj["no_color_explicit"] = no_color
+    ctx.obj["config_path"] = Path(config_path) if config_path else None
+    ctx.obj["config"] = {}
+    global _force_color
+    _force_color = not no_color
+    if no_color:
+        console._color_system = None
 
 
-@main.command()
+@main.command(
+    short_help="Indexa um repositório",
+    epilog="Exemplos:\n  eizo init\n  eizo init /caminho/do/repo --rebuild",
+)
 @click.argument("path", default=".", type=click.Path(exists=True, file_okay=False))
 @click.option("--rebuild", is_flag=True, help="Reconstrói o grafo do zero")
 @click.option("--force", is_flag=True, help="Força reindexação de todos os arquivos")
@@ -106,16 +243,24 @@ def init(ctx: click.Context, path: str, rebuild: bool, force: bool) -> None:
         })
 
 
-@main.command()
+@main.command(
+    short_help="Busca símbolos no grafo",
+    epilog=(
+        "Exemplos:\n"
+        "  eizo search helper\n"
+        "  eizo search pagamento --full-text\n"
+        "  eizo search foo --kind function --lang python"
+    ),
+)
 @click.argument("query")
 @click.option("--kind", help="Filtrar por tipo (function, class, method, import)")
 @click.option("--language", help="Filtrar por linguagem (python, typescript)")
-@click.option("--limit", default=20, help="Limite de resultados")
+@_limit_option(default=20, help_text="Limite de resultados")
 @click.option(
     "--full-text", "full_text", is_flag=True,
     help="Busca full-text (FTS5) sobre nome + docstring + code_snippet, ranqueada por relevância",
 )
-@click.option("--path", "repo_path", default=".", help="Caminho do repositório")
+@_repo_option()
 @click.pass_context
 def search(
     ctx: click.Context,
@@ -126,9 +271,25 @@ def search(
     full_text: bool,
     repo_path: str,
 ) -> None:
-    """Busca símbolos no grafo de conhecimento."""
+    """Busca símbolos no grafo de conhecimento.
+
+    Por padrão, procura no nome dos símbolos. Use --full-text para buscar
+    também em docstrings e trechos de código (FTS5).
+    """
+    cfg = _merge_config(
+        ctx,
+        command_defaults={
+            "limit": {"default": 20},
+            "full_text": {"default": False},
+        },
+        command_values={"limit": limit, "full_text": full_text, "repo_path": repo_path},
+    )
     store = GraphStore(Path(repo_path).resolve())
-    results = search_symbols(store, query, kind=kind, language=language, limit=limit, full_text=full_text)
+    results = search_symbols(
+        store, query,
+        kind=kind, language=language,
+        limit=int(cfg["limit"]), full_text=bool(cfg["full_text"]),
+    )
 
     if ctx.obj.get("format") == "json":
         _emit_json([_node_to_dict(n) for n in results])
@@ -158,17 +319,29 @@ def search(
     console.print(f"[dim]{len(results)} resultado(s)[/dim]")
 
 
-@main.command()
+@main.command(
+    short_help="Traça call graph de um símbolo",
+    epilog="Exemplos:\n  eizo trace main\n  eizo trace helper --direction incoming\n  eizo trace core --depth 5",
+)
 @click.argument("symbol")
 @click.option("--direction", type=click.Choice(["incoming", "outgoing", "both"]), default="both")
-@click.option("--depth", default=3, help="Profundidade máxima")
-@click.option("--path", "repo_path", default=".", help="Caminho do repositório")
+@_depth_option(default=3)
+@_repo_option()
 @click.pass_context
 def trace(ctx: click.Context, symbol: str, direction: str, depth: int, repo_path: str) -> None:
-    """Traça o call graph de um símbolo."""
+    """Traça o call graph de um símbolo.
+
+    Mostra quem chama e quem é chamado a partir do símbolo informado.
+    Use --direction incoming, outgoing ou both (padrão).
+    """
+    cfg = _merge_config(
+        ctx,
+        command_defaults={"depth": {"default": 3}},
+        command_values={"depth": depth, "repo_path": repo_path},
+    )
     repo = Path(repo_path).resolve()
     store = GraphStore(repo)
-    result = trace_call_path(store, symbol, direction=direction, max_depth=depth)
+    result = trace_call_path(store, symbol, direction=direction, max_depth=cfg["depth"])
 
     if ctx.obj.get("format") == "json":
         _emit_json({
@@ -272,15 +445,27 @@ def _max_depth(items: list[dict[str, Any]], key: str) -> int:
     return best
 
 
-@main.command()
+@main.command(
+    short_help="Analisa impacto de mudança em um símbolo",
+    epilog="Exemplos:\n  eizo impact core\n  eizo impact Base --depth 5",
+)
 @click.argument("symbol")
-@click.option("--depth", default=3, help="Profundidade máxima")
-@click.option("--path", "repo_path", default=".", help="Caminho do repositório")
+@_depth_option(default=3)
+@_repo_option()
 @click.pass_context
 def impact(ctx: click.Context, symbol: str, depth: int, repo_path: str) -> None:
-    """Analisa o impacto de mudança em um símbolo."""
+    """Analisa o impacto de mudança em um símbolo.
+
+    Lista os símbolos que dependem do símbolo informado (imports, chamadas,
+    herança) até a profundidade especificada.
+    """
+    cfg = _merge_config(
+        ctx,
+        command_defaults={"depth": {"default": 3}},
+        command_values={"depth": depth, "repo_path": repo_path},
+    )
     store = GraphStore(Path(repo_path).resolve())
-    result = analyze_impact(store, symbol, max_depth=depth)
+    result = analyze_impact(store, symbol, max_depth=cfg["depth"])
 
     if ctx.obj.get("format") == "json":
         _emit_json({
@@ -317,11 +502,20 @@ def _build_impact_tree(tree: Tree, chain: list[dict[str, Any]]) -> None:
             _build_impact_tree(branch, item["dependents"])
 
 
-@main.command()
-@click.option("--path", "repo_path", default=".", help="Caminho do repositório")
+@main.command(
+    short_help="Mostra visão arquitetural",
+    epilog="Exemplos:\n  eizo arch\n  eizo arch --repo /caminho/do/projeto",
+)
+@_repo_option()
 @click.pass_context
 def arch(ctx: click.Context, repo_path: str) -> None:
     """Mostra visão arquitetural do repositório."""
+    _merge_config(ctx, command_values={"repo_path": repo_path})
+    _render_arch(ctx, repo_path)
+
+
+def _render_arch(ctx: click.Context, repo_path: str, output: str | None = None) -> None:
+    """Renderiza visão arquitetural (usada por `arch` e `architecture`)."""
     store = GraphStore(Path(repo_path).resolve())
     stats = store.get_stats()
 
@@ -371,16 +565,24 @@ def arch(ctx: click.Context, repo_path: str) -> None:
     console.print(f"\n[dim]Total: {stats.total_nodes} nós, {stats.total_edges} arestas, "
                   f"{stats.total_files} arquivos, {stats.db_size_bytes / 1024:.1f} KB[/dim]")
 
+    if output:
+        result = export_architecture_mermaid(store)
+        Path(output).write_text(result, encoding="utf-8")
+        console.print(f"[green]✓ Diagrama de arquitetura exportado para {output}[/green]")
 
-@main.command()
-@click.option("--port", default=8765, help="Porta do servidor MCP (transporte SSE)")
+
+@main.command(
+    short_help="Inicia servidor MCP para agentes LLM",
+    epilog="Exemplos:\n  eizo mcp\n  eizo mcp --port 8765 --transport sse",
+)
+@click.option("--port", default=8765, type=click.IntRange(min=1, max=65535), help="Porta do servidor MCP")
 @click.option(
     "--transport",
     type=click.Choice(["sse", "stdio"]),
     default="sse",
     help="Transporte: 'sse' (HTTP) ou 'stdio' (local, padrão para agents)",
 )
-@click.option("--path", "repo_path", default=".", help="Caminho do repositório")
+@_repo_option()
 def mcp(port: int, transport: str, repo_path: str) -> None:
     """Inicia o servidor MCP para agentes LLM."""
     from eizo.mcp.server import serve_mcp
@@ -390,11 +592,15 @@ def mcp(port: int, transport: str, repo_path: str) -> None:
     serve_mcp(store, port, transport=transport)  # type: ignore[arg-type]
 
 
-@main.command()
-@click.option("--path", "repo_path", default=".", help="Caminho do repositório")
+@main.command(
+    short_help="Mostra estatísticas do grafo",
+    epilog="Exemplos:\n  eizo status\n  eizo status --repo /caminho/do/projeto",
+)
+@_repo_option()
 @click.pass_context
 def status(ctx: click.Context, repo_path: str) -> None:
     """Mostra estatísticas do grafo de conhecimento."""
+    _merge_config(ctx, command_values={"repo_path": repo_path})
     store = GraphStore(Path(repo_path).resolve())
     stats = store.get_stats()
 
@@ -429,21 +635,30 @@ def status(ctx: click.Context, repo_path: str) -> None:
     console.print(table)
 
 
-@main.command()
-@click.option("--path", "repo_path", default=".", help="Caminho do repositório")
+@main.command(
+    short_help="Detecta código morto",
+    epilog="Exemplos:\n  eizo dead\n  eizo dead --entrypoint my_entry --limit 50",
+)
+@_repo_option()
 @click.option(
     "--entrypoint",
     "entrypoints",
     multiple=True,
     help="Nomes de entrypoints a excluir (pode repetir). Padrão: main, run, serve, etc.",
 )
-@click.option("--limit", default=100, help="Máximo de resultados")
+@_limit_option(default=100, help_text="Máximo de resultados")
 @click.pass_context
 def dead(ctx: click.Context, repo_path: str, entrypoints: tuple[str, ...], limit: int) -> None:
-    """Detecta código morto — símbolos definidos sem nenhum caller/import."""
+    """Detecta código morto — símbolos definidos sem nenhum caller/import.
+    """
+    cfg = _merge_config(
+        ctx,
+        command_defaults={"limit": {"default": 100}},
+        command_values={"limit": limit, "repo_path": repo_path},
+    )
     store = GraphStore(Path(repo_path).resolve())
     eps = frozenset(entrypoints) if entrypoints else None
-    results = find_dead_code(store, entrypoints=eps, limit=limit)
+    results = find_dead_code(store, entrypoints=eps, limit=cfg["limit"])
 
     if ctx.obj.get("format") == "json":
         _emit_json([_node_to_dict(n) for n in results])
@@ -476,10 +691,13 @@ def dead(ctx: click.Context, repo_path: str, entrypoints: tuple[str, ...], limit
     )
 
 
-@main.command()
-@click.option("--path", "repo_path", default=".", help="Caminho do repositório")
-@click.option("--limit", default=20, help="Máximo de resultados")
-@click.option("--min-refs", default=2, help="Mínimo de referências para aparecer")
+@main.command(
+    short_help="Mostra símbolos mais referenciados",
+    epilog="Exemplos:\n  eizo hotspots\n  eizo hotspots --min-refs 1 --limit 10",
+)
+@_repo_option()
+@_limit_option(default=20, help_text="Máximo de resultados")
+@click.option("--min-refs", default=2, type=click.IntRange(min=1), help="Mínimo de referências para aparecer")
 @click.pass_context
 def hotspots(
     ctx: click.Context,
@@ -487,9 +705,17 @@ def hotspots(
     limit: int,
     min_refs: int,
 ) -> None:
-    """Mostra símbolos mais referenciados (pontos críticos de acoplamento)."""
+    """Mostra símbolos mais referenciados."""
+    cfg = _merge_config(
+        ctx,
+        command_defaults={
+            "limit": {"default": 20},
+            "min_refs": {"default": 2},
+        },
+        command_values={"limit": limit, "min_refs": min_refs, "repo_path": repo_path},
+    )
     store = GraphStore(Path(repo_path).resolve())
-    results = find_hotspots(store, limit=limit, min_references=min_refs)
+    results = find_hotspots(store, limit=cfg["limit"], min_references=cfg["min_refs"])
 
     if ctx.obj.get("format") == "json":
         _emit_json([
@@ -530,11 +756,19 @@ def hotspots(
     )
 
 
-@main.command()
+@main.command(
+    short_help="Exporta o grafo",
+    epilog=(
+        "Exemplos:\n"
+        "  eizo export dot -o graph.dot\n"
+        "  eizo export mermaid --kind class --edge-kind inherits\n"
+        "  eizo export json --language python --limit 50"
+    ),
+)
 @click.argument("format", type=click.Choice(["dot", "mermaid", "json", "html"]))
 @click.option("--kind", help="Filtrar nós por tipo (function, class, method)")
 @click.option("--language", help="Filtrar nós por linguagem (python, typescript)")
-@click.option("--limit", default=None, type=int, help="Máximo de nós")
+@click.option("--limit", default=None, type=click.IntRange(min=1), help="Máximo de nós")
 @click.option(
     "--edge-kind",
     "edge_kinds",
@@ -548,7 +782,7 @@ def hotspots(
     help="Tipo de diagrama Mermaid (apenas para format=mermaid)",
 )
 @click.option("--output", "-o", type=click.Path(), help="Arquivo de saída (padrão: stdout)")
-@click.option("--path", "repo_path", default=".", help="Caminho do repositório")
+@_repo_option()
 def export(
     format: str,
     kind: str | None,
@@ -559,15 +793,7 @@ def export(
     output: str | None,
     repo_path: str,
 ) -> None:
-    """Exporta o grafo em formato DOT, Mermaid, JSON ou HTML (grafo 3D interativo).
-
-    \b
-    Exemplos:
-      eizo export dot -o graph.dot
-      eizo export mermaid --kind class --edge-kind inherits
-      eizo export json --language python --limit 50
-      eizo export html -o graph.html && open graph.html
-    """
+    """Exporta o grafo em formato DOT, Mermaid, JSON ou HTML (tridimensional)."""
     store = GraphStore(Path(repo_path).resolve())
     eps = frozenset(edge_kinds) if edge_kinds else None
 
@@ -589,3 +815,26 @@ def export(
     else:
         # Saída direta na stdout (sem rich formatting)
         click.echo(result)
+
+
+
+@main.command(
+    short_help="Gera diagrama de arquitetura (alias de arch)", name="architecture"
+)
+@click.option("--output", "-o", type=click.Path(), help="Arquivo de saída (padrão: stdout)")
+@_repo_option()
+@click.pass_context
+def architecture(
+    ctx: click.Context,
+    repo_path: str,
+    output: str | None,
+) -> None:
+    """Gera diagrama de arquitetura em Mermaid do repositório indexado.
+
+    Alias do comando arch. Mantido para compatibilidade.
+
+    Quando usado sem -o, mostra a mesma visão arquitetural de arch.
+    Com -o, exporta o diagrama Mermaid de arquitetura para o arquivo.
+    """
+    _merge_config(ctx, command_values={"repo_path": repo_path})
+    _render_arch(ctx, repo_path, output=output)
