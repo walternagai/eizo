@@ -26,6 +26,7 @@ make coverage    # pytest --cov=src/eizo --cov-report=term-missing
   `eizo export <format>` subcommand argument.
 - Repository path: `--repo <path>` or short `-C <path>` (like `git -C`).
   The old `--path` option was removed.
+- The `init` command accepts either a positional `[PATH]` or `--repo`/`-C`.
 - Numeric options are validated: `--depth 1..10`, `--limit >=1`,
   `--min-refs >=1`, `--port 1..65535`.
 - `architecture` is an alias for `arch` (kept for compatibility).
@@ -65,6 +66,13 @@ make coverage    # pytest --cov=src/eizo --cov-report=term-missing
   - `EIZO_MIN_REFS` — default for `--min-refs` in `hotspots`.
   - `EIZO_FULL_TEXT` — default for `--full-text` in `search`.
 - Merge priority: **CLI args > env vars > config file > Click defaults**.
+
+## Color output
+
+- `--no-color` disables colors (useful for CI or piping).
+- `--color` forces colors even when output is redirected.
+- `NO_COLOR` / `EIZO_NO_COLOR` disables colors by default.
+- Merge priority: `--color` > `--no-color` > env vars > config file.
 
 ## Logging and verbosity
 

@@ -24,6 +24,7 @@ from typing import Any, cast
 
 import click
 from click.shell_completion import get_completion_class
+from rich.color import ColorSystem
 from rich.console import Console
 from rich.table import Table
 from rich.tree import Tree
@@ -77,7 +78,7 @@ def _repo_option() -> Callable[..., Any]:
         "-C",
         "repo_path",
         default=".",
-        help="Caminho do repositório",
+        help="Caminho do repositório a ser analisado (padrão: diretório atual)",
     )
 
 
@@ -197,7 +198,8 @@ def _merge_config(
         if env_format:
             ctx.obj["format"] = env_format
 
-    if not ctx.obj.get("no_color_explicit"):
+    color_explicit = ctx.obj.get("color_explicit", False)
+    if not color_explicit and not ctx.obj.get("no_color_explicit"):
         if "no_color" in cfg and cfg["no_color"]:
             console._color_system = None
         env_no_color = _env_bool("no_color")
@@ -281,6 +283,13 @@ def _is_explicit(ctx: click.Context, param_name: str) -> bool:
     help="Desativa cores na saída (útil para CI ou piping)",
 )
 @click.option(
+    "--color",
+    "color",
+    is_flag=True,
+    default=False,
+    help="Força cores na saída mesmo quando redirecionado",
+)
+@click.option(
     "--config",
     "config_path",
     type=click.Path(exists=True, dir_okay=False),
@@ -292,14 +301,14 @@ def _is_explicit(ctx: click.Context, param_name: str) -> bool:
     "install_completion",
     type=click.Choice(SUPPORTED_SHELLS),
     default=None,
-    help="Instala shell completion e sai (bash/zsh/fish)",
+    help="Mostra script de completion; redirecione para ~/.bashrc etc. para instalar",
 )
 @click.option(
     "--show-completion",
     "show_completion",
     type=click.Choice(SUPPORTED_SHELLS),
     default=None,
-    help="Mostra script de shell completion e sai (bash/zsh/fish)",
+    help="Mostra script de completion; redirecione para ~/.bashrc etc. para instalar",
 )
 @click.option(
     "-v",
@@ -318,6 +327,7 @@ def main(
     ctx: click.Context,
     output_format: str,
     no_color: bool,
+    color: bool,
     config_path: str | None,
     install_completion: str | None,
     show_completion: str | None,
@@ -344,43 +354,64 @@ def main(
     ctx.obj["format"] = output_format
     ctx.obj["format_explicit"] = _is_explicit(ctx, "output_format")
     ctx.obj["no_color_explicit"] = _is_explicit(ctx, "no_color") or no_color
+    ctx.obj["color_explicit"] = _is_explicit(ctx, "color") or color
     ctx.obj["config_path_explicit"] = _is_explicit(ctx, "config_path")
     ctx.obj["config_path"] = Path(config_path) if config_path else None
     ctx.obj["config"] = {}
     ctx.obj["verbosity"] = verbosity
     ctx.obj["quiet"] = quiet
     global _force_color
-    _force_color = not no_color
-    if no_color:
+    if ctx.obj["color_explicit"]:
+        _force_color = True
+        console._color_system = ColorSystem.STANDARD
+        console._force_terminal = True
+    elif ctx.obj["no_color_explicit"]:
+        _force_color = False
         console._color_system = None
+    else:
+        _force_color = not no_color
 
 
 @main.command(
     short_help="Indexa um repositório",
-    epilog="Exemplos:\n  eizo init\n  eizo init /caminho/do/repo --rebuild\n  eizo init --dry-run",
+    epilog=(
+        "\b\n"
+        "Exemplos:\n"
+        "  eizo init\n"
+        "  eizo init /caminho/do/repo --rebuild\n"
+        "  eizo init --repo /caminho/do/repo --dry-run"
+    ),
 )
 @click.argument("path", default=".", type=click.Path(exists=True, file_okay=False))
 @click.option("--rebuild", is_flag=True, help="Reconstrói o grafo do zero")
 @click.option("--force", is_flag=True, help="Força reindexação de todos os arquivos")
 @click.option("--dry-run", is_flag=True, help="Lista arquivos que seriam indexados sem persistir")
+@_repo_option()
 @click.pass_context
-def init(ctx: click.Context, path: str, rebuild: bool, force: bool, dry_run: bool) -> None:
+def init(
+    ctx: click.Context,
+    path: str,
+    repo_path: str,
+    rebuild: bool,
+    force: bool,
+    dry_run: bool,
+) -> None:
     """Indexa um repositório no grafo de conhecimento."""
-    repo_path = Path(path).resolve()
-    store = GraphStore(repo_path)
+    effective_path = Path(repo_path if repo_path != "." else path).resolve()
+    store = GraphStore(effective_path)
 
     if dry_run:
-        logger.info("Dry-run: descobrindo arquivos em %s", repo_path)
-        files = cast(list[Path], index_repository(repo_path, store=None, dry_run=True))
+        logger.info("Dry-run: descobrindo arquivos em %s", effective_path)
+        files = cast(list[Path], index_repository(effective_path, store=None, dry_run=True))
         if ctx.obj.get("format") == "json":
             _emit_json({
                 "dry_run": True,
-                "repository": str(repo_path),
+                "repository": str(effective_path),
                 "files": [str(f) for f in files],
                 "count": len(files),
             })
             return
-        console.print(f"[bold]Dry-run:[/bold] {len(files)} arquivo(s) seriam indexados em {repo_path}")
+        console.print(f"[bold]Dry-run:[/bold] {len(files)} arquivo(s) seriam indexados em {effective_path}")
         for f in files:
             console.print(f"  {f}")
         return
@@ -391,15 +422,15 @@ def init(ctx: click.Context, path: str, rebuild: bool, force: bool, dry_run: boo
         store.clear_all()
         force = True
 
-    logger.info("Iniciando indexação de %s", repo_path)
-    index_repository(repo_path, store, force=force)
+    logger.info("Iniciando indexação de %s", effective_path)
+    index_repository(effective_path, store, force=force)
     logger.info("Indexação concluída")
 
     if ctx.obj.get("format") == "json":
         stats = store.get_stats()
         _emit_json({
             "status": "ok",
-            "repository": str(repo_path),
+            "repository": str(effective_path),
             "stats": {
                 "total_nodes": stats.total_nodes,
                 "total_edges": stats.total_edges,
@@ -412,6 +443,7 @@ def init(ctx: click.Context, path: str, rebuild: bool, force: bool, dry_run: boo
 @main.command(
     short_help="Busca símbolos no grafo",
     epilog=(
+        "\b\n"
         "Exemplos:\n"
         "  eizo search helper\n"
         "  eizo search pagamento --full-text\n"
@@ -488,7 +520,7 @@ def search(
 
 @main.command(
     short_help="Traça call graph de um símbolo",
-    epilog="Exemplos:\n  eizo trace main\n  eizo trace helper --direction incoming\n  eizo trace core --depth 5",
+    epilog="\b\nExemplos:\n  eizo trace main\n  eizo trace helper --direction incoming\n  eizo trace core --depth 5",
 )
 @click.argument("symbol")
 @click.option("--direction", type=click.Choice(["incoming", "outgoing", "both"]), default="both")
@@ -615,7 +647,7 @@ def _max_depth(items: list[dict[str, Any]], key: str) -> int:
 
 @main.command(
     short_help="Analisa impacto de mudança em um símbolo",
-    epilog="Exemplos:\n  eizo impact core\n  eizo impact Base --depth 5",
+    epilog="\b\nExemplos:\n  eizo impact core\n  eizo impact Base --depth 5",
 )
 @click.argument("symbol")
 @_depth_option(default=3)
@@ -673,7 +705,7 @@ def _build_impact_tree(tree: Tree, chain: list[dict[str, Any]]) -> None:
 
 @main.command(
     short_help="Mostra visão arquitetural",
-    epilog="Exemplos:\n  eizo arch\n  eizo arch --repo /caminho/do/projeto",
+    epilog="\b\nExemplos:\n  eizo arch\n  eizo arch --repo /caminho/do/projeto",
 )
 @_repo_option()
 @click.pass_context
@@ -742,7 +774,7 @@ def _render_arch(ctx: click.Context, repo_path: str, output: str | None = None) 
 
 @main.command(
     short_help="Inicia servidor MCP para agentes LLM",
-    epilog="Exemplos:\n  eizo mcp\n  eizo mcp --port 8765 --transport sse",
+    epilog="\b\nExemplos:\n  eizo mcp\n  eizo mcp --port 8765 --transport sse",
 )
 @click.option("--port", default=8765, type=click.IntRange(min=1, max=65535), help="Porta do servidor MCP")
 @click.option(
@@ -752,10 +784,13 @@ def _render_arch(ctx: click.Context, repo_path: str, output: str | None = None) 
     help="Transporte: 'sse' (HTTP) ou 'stdio' (local, padrão para agents)",
 )
 @_repo_option()
-def mcp(port: int, transport: str, repo_path: str) -> None:
+@click.pass_context
+def mcp(ctx: click.Context, port: int, transport: str, repo_path: str) -> None:
     """Inicia o servidor MCP para agentes LLM."""
     from eizo.mcp.server import serve_mcp
 
+    cfg = _merge_config(ctx, command_values={"repo_path": repo_path})
+    repo_path = cfg.get("repo_path", repo_path)
     store = GraphStore(Path(repo_path).resolve())
     # transport é validado por click.Choice(["sse", "stdio"]) — cast seguro
     serve_mcp(store, port, transport=transport)  # type: ignore[arg-type]
@@ -763,7 +798,7 @@ def mcp(port: int, transport: str, repo_path: str) -> None:
 
 @main.command(
     short_help="Mostra estatísticas do grafo",
-    epilog="Exemplos:\n  eizo status\n  eizo status --repo /caminho/do/projeto",
+    epilog="\b\nExemplos:\n  eizo status\n  eizo status --repo /caminho/do/projeto",
 )
 @_repo_option()
 @click.pass_context
@@ -807,7 +842,7 @@ def status(ctx: click.Context, repo_path: str) -> None:
 
 @main.command(
     short_help="Detecta código morto",
-    epilog="Exemplos:\n  eizo dead\n  eizo dead --entrypoint my_entry --limit 50",
+    epilog="\b\nExemplos:\n  eizo dead\n  eizo dead --entrypoint my_entry --limit 50",
 )
 @_repo_option()
 @click.option(
@@ -864,7 +899,7 @@ def dead(ctx: click.Context, repo_path: str, entrypoints: tuple[str, ...], limit
 
 @main.command(
     short_help="Mostra símbolos mais referenciados",
-    epilog="Exemplos:\n  eizo hotspots\n  eizo hotspots --min-refs 1 --limit 10",
+    epilog="\b\nExemplos:\n  eizo hotspots\n  eizo hotspots --min-refs 1 --limit 10",
 )
 @_repo_option()
 @_limit_option(default=20, help_text="Máximo de resultados")
@@ -931,6 +966,7 @@ def hotspots(
 @main.command(
     short_help="Exporta o grafo",
     epilog=(
+        "\b\n"
         "Exemplos:\n"
         "  eizo export dot -o graph.dot\n"
         "  eizo export mermaid --kind class --edge-kind inherits\n"
@@ -955,7 +991,9 @@ def hotspots(
 )
 @click.option("--output", "-o", type=click.Path(), help="Arquivo de saída (padrão: stdout)")
 @_repo_option()
+@click.pass_context
 def export(
+    ctx: click.Context,
     format: str,
     kind: str | None,
     language: str | None,
@@ -966,6 +1004,8 @@ def export(
     repo_path: str,
 ) -> None:
     """Exporta o grafo em formato DOT, Mermaid, JSON ou HTML (tridimensional)."""
+    cfg = _merge_config(ctx, command_values={"repo_path": repo_path})
+    repo_path = cfg.get("repo_path", repo_path)
     store = GraphStore(Path(repo_path).resolve())
     eps = frozenset(edge_kinds) if edge_kinds else None
 
@@ -991,7 +1031,15 @@ def export(
 
 
 @main.command(
-    short_help="Gera diagrama de arquitetura (alias de arch)", name="architecture"
+    short_help="Gera diagrama de arquitetura (alias de arch)",
+    name="architecture",
+    epilog=(
+        "\b\n"
+        "Exemplos:\n"
+        "  eizo architecture\n"
+        "  eizo architecture -o arch.mmd\n"
+        "  eizo architecture --repo /caminho/do/projeto"
+    ),
 )
 @click.option("--output", "-o", type=click.Path(), help="Arquivo de saída (padrão: stdout)")
 @_repo_option()

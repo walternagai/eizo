@@ -10,9 +10,18 @@ from typing import Any
 import pytest
 from click.testing import CliRunner
 
-from eizo.cli import main
+import eizo.cli
+from eizo.cli import console, main
 from eizo.graph.store import GraphStore
 from eizo.indexer import index_repository
+
+
+@pytest.fixture(autouse=True)
+def _reset_console() -> None:
+    """Reseta o estado global do console entre testes."""
+    console._color_system = None
+    console._force_terminal = None
+    eizo.cli._force_color = None
 
 
 class TestCliInit:
@@ -65,6 +74,28 @@ class TestCliInit:
         parsed = json.loads(result.output)
         assert parsed["dry_run"] is True
         assert any("test.py" in f for f in parsed["files"])
+
+    def test_init_with_repo_option(self, tmp_path: Path) -> None:
+        """Init aceita --repo como alternativa ao PATH posicional."""
+        runner = CliRunner()
+        repo = Path(tmp_path)
+        (repo / "test.py").write_text("x = 1\n")
+        result = runner.invoke(main, ["init", "--repo", str(repo)])
+        assert result.exit_code == 0
+        assert (repo / ".eizo" / "graph.db").exists()
+
+    def test_init_repo_option_overrides_path(self, tmp_path: Path) -> None:
+        """--repo tem precedência sobre PATH posicional no init."""
+        runner = CliRunner()
+        repo_a = tmp_path / "a"
+        repo_b = tmp_path / "b"
+        repo_a.mkdir()
+        repo_b.mkdir()
+        (repo_a / "test.py").write_text("x = 1\n")
+        (repo_b / "test.py").write_text("y = 2\n")
+        result = runner.invoke(main, ["init", str(repo_a), "--repo", str(repo_b)])
+        assert result.exit_code == 0
+        assert (repo_b / ".eizo" / "graph.db").exists()
 
 
 class TestCliSearch:
@@ -504,6 +535,35 @@ class TestCliLogging:
             result = runner.invoke(main, ["--quiet", "-v", "init", "--dry-run", str(repo)])
         assert result.exit_code == 0
         assert not any(record.levelno == logging.INFO for record in caplog.records)
+
+
+class TestCliColor:
+    """Testes para controle de cores."""
+
+    def test_color_forces_colors(self, tmp_path: Path) -> None:
+        """--color força cores mesmo quando output é redirecionado."""
+        runner = CliRunner()
+        repo = Path(tmp_path)
+        (repo / "test.py").write_text("def foo(): pass\n")
+        store = GraphStore(repo)
+        index_repository(repo, store)
+
+        result = runner.invoke(main, ["--color", "status", "--repo", str(repo)])
+        assert result.exit_code == 0
+        assert "\x1b[" in result.output
+
+    def test_color_overrides_no_color_env(self, tmp_path: Path, monkeypatch: Any) -> None:
+        """--color explícito sobrescreve NO_COLOR."""
+        runner = CliRunner()
+        repo = Path(tmp_path)
+        (repo / "test.py").write_text("def foo(): pass\n")
+        store = GraphStore(repo)
+        index_repository(repo, store)
+
+        monkeypatch.setenv("NO_COLOR", "1")
+        result = runner.invoke(main, ["--color", "status", "--repo", str(repo)])
+        assert result.exit_code == 0
+        assert "\x1b[" in result.output
 
 
 class TestCliArchitecture:
