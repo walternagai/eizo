@@ -16,10 +16,11 @@ Comandos:
 from __future__ import annotations
 
 import json
+import logging
 import os
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import click
 from click.shell_completion import get_completion_class
@@ -43,6 +44,25 @@ from eizo.queries.trace import trace_call_path
 
 console = Console()
 _force_color: bool | None = None
+logger = logging.getLogger("eizo")
+
+
+def _setup_logging(verbosity: int, quiet: bool) -> None:
+    """Configura nível do logger eizo a partir de -v/-vv/--quiet."""
+    if quiet:
+        level = logging.ERROR
+    elif verbosity >= 2:
+        level = logging.DEBUG
+    elif verbosity >= 1:
+        level = logging.INFO
+    else:
+        level = logging.WARNING
+
+    logger.setLevel(level)
+    if not logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+        logger.addHandler(handler)
 
 
 def _emit_json(data: Any) -> None:
@@ -281,6 +301,18 @@ def _is_explicit(ctx: click.Context, param_name: str) -> bool:
     default=None,
     help="Mostra script de shell completion e sai (bash/zsh/fish)",
 )
+@click.option(
+    "-v",
+    "--verbose",
+    "verbosity",
+    count=True,
+    help="Aumenta verbosidade (-v=INFO, -vv=DEBUG)",
+)
+@click.option(
+    "--quiet",
+    is_flag=True,
+    help="Silencia mensagens de log (apenas erros)",
+)
 @click.pass_context
 def main(
     ctx: click.Context,
@@ -289,6 +321,8 @@ def main(
     config_path: str | None,
     install_completion: str | None,
     show_completion: str | None,
+    verbosity: int,
+    quiet: bool,
 ) -> None:
     """映像 — Codebase Knowledge Graph CLI.
 
@@ -306,12 +340,15 @@ def main(
         ctx.exit()
 
     ctx.ensure_object(dict)
+    _setup_logging(verbosity, quiet)
     ctx.obj["format"] = output_format
     ctx.obj["format_explicit"] = _is_explicit(ctx, "output_format")
     ctx.obj["no_color_explicit"] = _is_explicit(ctx, "no_color") or no_color
     ctx.obj["config_path_explicit"] = _is_explicit(ctx, "config_path")
     ctx.obj["config_path"] = Path(config_path) if config_path else None
     ctx.obj["config"] = {}
+    ctx.obj["verbosity"] = verbosity
+    ctx.obj["quiet"] = quiet
     global _force_color
     _force_color = not no_color
     if no_color:
@@ -320,23 +357,43 @@ def main(
 
 @main.command(
     short_help="Indexa um repositório",
-    epilog="Exemplos:\n  eizo init\n  eizo init /caminho/do/repo --rebuild",
+    epilog="Exemplos:\n  eizo init\n  eizo init /caminho/do/repo --rebuild\n  eizo init --dry-run",
 )
 @click.argument("path", default=".", type=click.Path(exists=True, file_okay=False))
 @click.option("--rebuild", is_flag=True, help="Reconstrói o grafo do zero")
 @click.option("--force", is_flag=True, help="Força reindexação de todos os arquivos")
+@click.option("--dry-run", is_flag=True, help="Lista arquivos que seriam indexados sem persistir")
 @click.pass_context
-def init(ctx: click.Context, path: str, rebuild: bool, force: bool) -> None:
+def init(ctx: click.Context, path: str, rebuild: bool, force: bool, dry_run: bool) -> None:
     """Indexa um repositório no grafo de conhecimento."""
     repo_path = Path(path).resolve()
     store = GraphStore(repo_path)
 
+    if dry_run:
+        logger.info("Dry-run: descobrindo arquivos em %s", repo_path)
+        files = cast(list[Path], index_repository(repo_path, store=None, dry_run=True))
+        if ctx.obj.get("format") == "json":
+            _emit_json({
+                "dry_run": True,
+                "repository": str(repo_path),
+                "files": [str(f) for f in files],
+                "count": len(files),
+            })
+            return
+        console.print(f"[bold]Dry-run:[/bold] {len(files)} arquivo(s) seriam indexados em {repo_path}")
+        for f in files:
+            console.print(f"  {f}")
+        return
+
     if rebuild:
         console.print("[yellow]Reconstruindo grafo do zero...[/yellow]")
+        logger.info("Limpando grafo existente em %s", store.db_path)
         store.clear_all()
         force = True
 
+    logger.info("Iniciando indexação de %s", repo_path)
     index_repository(repo_path, store, force=force)
+    logger.info("Indexação concluída")
 
     if ctx.obj.get("format") == "json":
         stats = store.get_stats()

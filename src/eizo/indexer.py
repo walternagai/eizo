@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import logging
 import os
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from eizo.parser.python import PythonParser
 from eizo.parser.typescript import TypeScriptParser
 
 console = Console()
+logger = logging.getLogger("eizo")
 
 # Diretórios e arquivos a ignorar
 IGNORE_DIRS: set[str] = {
@@ -50,11 +52,15 @@ def _get_parsers() -> list[BaseParser]:
     parsers: list[BaseParser] = []
     try:
         parsers.append(PythonParser())
+        logger.debug("Python parser inicializado")
     except RuntimeError as e:
+        logger.warning("Python parser não disponível: %s", e)
         console.print(f"[yellow]⚠ Python parser não disponível: {e}[/yellow]")
     try:
         parsers.append(TypeScriptParser())
+        logger.debug("TypeScript parser inicializado")
     except RuntimeError as e:
+        logger.warning("TypeScript parser não disponível: %s", e)
         console.print(f"[yellow]⚠ TypeScript parser não disponível: {e}[/yellow]")
     return parsers
 
@@ -71,7 +77,8 @@ def index_repository(
     repo_path: Path | str,
     store: GraphStore | None = None,
     force: bool = False,
-) -> GraphStore:
+    dry_run: bool = False,
+) -> list[Path] | GraphStore:
     """Indexa um repositório inteiro no grafo de conhecimento.
 
     Usa indexação incremental: arquivos cujo conteúdo (hash) não mudou desde a
@@ -81,22 +88,26 @@ def index_repository(
         repo_path: Caminho do repositório.
         store: GraphStore existente (opcional). Se None, cria um novo.
         force: Se True, reindexa todos os arquivos ignorando o cache.
+        dry_run: Se True, apenas descobre e retorna a lista de arquivos que
+            seriam indexados, sem persistir no banco.
 
     Returns:
-        GraphStore populado.
+        GraphStore populado quando dry_run=False; lista de Path quando dry_run=True.
     """
     repo_path = Path(repo_path).resolve()
     if not repo_path.is_dir():
         msg = f"Caminho não é um diretório válido: {repo_path}"
         raise NotADirectoryError(msg)
 
-    if store is None:
+    if store is None and not dry_run:
         store = GraphStore(repo_path)
 
     parsers = _get_parsers()
     if not parsers:
         console.print("[red]✗ Nenhum parser disponível. Instale tree-sitter-python e/ou tree-sitter-typescript.[/red]")
-        return store
+        if dry_run:
+            return []
+        return store  # type: ignore[return-value]
 
     # Colete todos os arquivos parseáveis. Poda IGNORE_DIRS durante o walk
     # (via os.walk, que permite modificar dirnames in-place) em vez de
@@ -117,7 +128,9 @@ def index_repository(
 
     if not files:
         console.print("[yellow]⚠ Nenhum arquivo parseável encontrado.[/yellow]")
-        return store
+        if dry_run:
+            return []
+        return store  # type: ignore[return-value]
 
     # Filtra arquivos inalterados (indexação incremental)
     files_to_index: list[Path] = []
@@ -126,25 +139,35 @@ def index_repository(
         if force:
             files_to_index.append(f)
             continue
+        if dry_run:
+            # Em dry-run não há cache; assume todos como candidatos.
+            files_to_index.append(f)
+            continue
         try:
             source = f.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
         content_hash = _file_content_hash(source)
-        if store.is_file_unchanged(str(f), content_hash):
+        if store is not None and store.is_file_unchanged(str(f), content_hash):
             skipped += 1
         else:
             files_to_index.append(f)
 
+    if dry_run:
+        logger.info("Dry-run: %d arquivo(s) candidatos em %s", len(files_to_index), repo_path)
+        return files_to_index
+
     if not files_to_index:
         console.print(f"[green]✓ {len(files)} arquivo(s) já indexado(s), nada a fazer.[/green]")
         console.print("  Use --rebuild para forçar reindexação completa.")
-        return store
+        return store  # type: ignore[return-value]
 
     action = "Reindexando" if force else "Indexando"
     console.print(f"[bold]{action} {len(files_to_index)} arquivo(s) em {repo_path}...[/bold]")
+    logger.info("%s %d arquivo(s) em %s", action, len(files_to_index), repo_path)
     if skipped > 0:
         console.print(f"[dim]  {skipped} arquivo(s) inalterado(s) pulado(s)[/dim]")
+        logger.info("%d arquivo(s) inalterado(s) pulado(s)", skipped)
 
     # Progresso
     progress = Progress(
@@ -168,39 +191,44 @@ def index_repository(
                 progress.advance(task)
                 continue
 
+            logger.debug("Parseando %s", file_path)
             try:
                 source = file_path.read_text(encoding="utf-8", errors="replace")
                 nodes, edges = parser.parse_file(file_path, source)
 
                 # Remove nós antigos do arquivo e reinsere
-                store.delete_nodes_by_file(str(file_path))
-                store.upsert_nodes(nodes)
-                store.upsert_edges(edges)
+                if store is not None:
+                    store.delete_nodes_by_file(str(file_path))
+                    store.upsert_nodes(nodes)
+                    store.upsert_edges(edges)
 
-                # Atualiza índice incremental
-                content_hash = _file_content_hash(source)
-                mtime = file_path.stat().st_mtime
-                indexed_at = dt.datetime.now(dt.timezone.utc).isoformat()
-                store.upsert_file_index(str(file_path), content_hash, mtime, indexed_at)
+                    # Atualiza índice incremental
+                    content_hash = _file_content_hash(source)
+                    mtime = file_path.stat().st_mtime
+                    indexed_at = dt.datetime.now(dt.timezone.utc).isoformat()
+                    store.upsert_file_index(str(file_path), content_hash, mtime, indexed_at)
 
                 total_nodes += len(nodes)
                 total_edges += len(edges)
 
             except Exception as e:
+                logger.warning("Erro ao parsear %s: %s", file_path, e)
                 errors.append((file_path, str(e)))
 
             progress.advance(task)
 
     # Resumo
-    stats = store.get_stats()
+    stats = store.get_stats() if store is not None else None
     console.print("\n[bold green]✓ Indexação concluída![/bold green]")
     console.print(f"  Arquivos indexados: {len(files_to_index)}")
     console.print(f"  Arquivos pulados: {skipped}")
-    console.print(f"  Total no grafo: {stats.total_files} arquivos")
-    console.print(f"  Nós: {stats.total_nodes}")
-    console.print(f"  Arestas: {stats.total_edges}")
-    console.print(f"  Linguagens: {', '.join(stats.by_language.keys())}")
-    console.print(f"  Tamanho do banco: {stats.db_size_bytes / 1024:.1f} KB")
+    if stats:
+        console.print(f"  Total no grafo: {stats.total_files} arquivos")
+        console.print(f"  Nós: {stats.total_nodes}")
+        console.print(f"  Arestas: {stats.total_edges}")
+        console.print(f"  Linguagens: {', '.join(stats.by_language.keys())}")
+        console.print(f"  Tamanho do banco: {stats.db_size_bytes / 1024:.1f} KB")
+    logger.info("Indexação concluída: %d arquivos, %d nós, %d arestas", len(files_to_index), total_nodes, total_edges)
 
     if errors:
         console.print(f"\n[yellow]⚠ {len(errors)} erro(s) durante indexação:[/yellow]")
@@ -209,4 +237,4 @@ def index_repository(
         if len(errors) > 5:
             console.print(f"  ... e mais {len(errors) - 5} erro(s)")
 
-    return store
+    return store  # type: ignore[return-value]

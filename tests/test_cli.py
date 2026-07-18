@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +42,29 @@ class TestCliInit:
         (repo / "test.py").write_text("x = 1\n")
         result = runner.invoke(main, ["init", "--rebuild", str(repo)])
         assert result.exit_code == 0
+
+    def test_init_dry_run(self, tmp_path: Path) -> None:
+        """Init --dry-run lista arquivos sem persistir."""
+        runner = CliRunner()
+        repo = Path(tmp_path)
+        (repo / "test.py").write_text("x = 1\n")
+        result = runner.invoke(main, ["init", "--dry-run", str(repo)])
+        assert result.exit_code == 0
+        assert "Dry-run" in result.output
+        assert "test.py" in result.output
+        # Não deve criar banco
+        assert not (repo / ".eizo" / "graph.db").exists()
+
+    def test_init_dry_run_json(self, tmp_path: Path) -> None:
+        """Init --dry-run --output-format json retorna lista em JSON."""
+        runner = CliRunner()
+        repo = Path(tmp_path)
+        (repo / "test.py").write_text("x = 1\n")
+        result = runner.invoke(main, ["--output-format", "json", "init", "--dry-run", str(repo)])
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert parsed["dry_run"] is True
+        assert any("test.py" in f for f in parsed["files"])
 
 
 class TestCliSearch:
@@ -446,6 +470,40 @@ class TestCliEnvVars:
         # Default do search é 20; como a query 'a' retorna 2 resultados,
         # basta confirmar que não houve erro e há resultados.
         assert "resultado(s)" in result.output
+
+
+class TestCliLogging:
+    """Testes para logging/verbosity."""
+
+    def test_verbose_info(self, tmp_path: Path, caplog: Any) -> None:
+        """-v emite mensagens INFO."""
+        runner = CliRunner()
+        repo = Path(tmp_path)
+        (repo / "test.py").write_text("x = 1\n")
+        with caplog.at_level("INFO", logger="eizo"):
+            result = runner.invoke(main, ["-v", "init", "--dry-run", str(repo)])
+        assert result.exit_code == 0
+        assert "INFO" in caplog.text
+
+    def test_very_verbose_debug(self, tmp_path: Path, caplog: Any) -> None:
+        """-vv emite mensagens DEBUG."""
+        runner = CliRunner()
+        repo = Path(tmp_path)
+        (repo / "test.py").write_text("x = 1\n")
+        with caplog.at_level("DEBUG", logger="eizo"):
+            result = runner.invoke(main, ["-vv", "init", "--dry-run", str(repo)])
+        assert result.exit_code == 0
+        assert any(record.levelno == logging.DEBUG for record in caplog.records)
+
+    def test_quiet_suppresses_info(self, tmp_path: Path, caplog: Any) -> None:
+        """--quiet mantém apenas WARNING+."""
+        runner = CliRunner()
+        repo = Path(tmp_path)
+        (repo / "test.py").write_text("x = 1\n")
+        with caplog.at_level("WARNING", logger="eizo"):
+            result = runner.invoke(main, ["--quiet", "-v", "init", "--dry-run", str(repo)])
+        assert result.exit_code == 0
+        assert not any(record.levelno == logging.INFO for record in caplog.records)
 
 
 class TestCliArchitecture:

@@ -66,6 +66,21 @@ make coverage    # pytest --cov=src/eizo --cov-report=term-missing
   - `EIZO_FULL_TEXT` — default for `--full-text` in `search`.
 - Merge priority: **CLI args > env vars > config file > Click defaults**.
 
+## Logging and verbosity
+
+- Global options:
+  - `-v` / `--verbose` — sets logger `eizo` to INFO.
+  - `-vv` — sets logger `eizo` to DEBUG.
+  - `--quiet` — only ERROR messages are emitted (overrides `-v`/`-vv`).
+- Default level is WARNING.
+- Format: `LEVEL: message`.
+
+## Dry-run
+
+- `eizo init --dry-run` lists files that would be indexed without persisting
+  to the SQLite graph.
+- Output can be table (default) or JSON via `--output-format json`.
+
 ## Architecture
 
 ```
