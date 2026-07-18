@@ -73,7 +73,7 @@ class TestCoverageGaps:
         index_repository(repo, store)
 
         runner = CliRunner()
-        result = runner.invoke(main, ["trace", "callee", "--direction", "incoming", "--path", str(repo)])
+        result = runner.invoke(main, ["trace", "callee", "--direction", "incoming", "--repo", str(repo)])
         assert result.exit_code == 0
         assert "Quem chama" in result.output
 
@@ -100,7 +100,7 @@ class TestCoverageGaps:
         ])
 
         runner = CliRunner()
-        result = runner.invoke(main, ["trace", "a", "--direction", "outgoing", "--depth", "3", "--path", str(repo)])
+        result = runner.invoke(main, ["trace", "a", "--direction", "outgoing", "--depth", "3", "--repo", str(repo)])
         assert result.exit_code == 0
 
     # ─── cli.py: linhas 156-158, 163-169 (impact tree) ───
@@ -126,7 +126,7 @@ class TestCoverageGaps:
         ])
 
         runner = CliRunner()
-        result = runner.invoke(main, ["impact", "core", "--depth", "3", "--path", str(repo)])
+        result = runner.invoke(main, ["impact", "core", "--depth", "3", "--repo", str(repo)])
         assert result.exit_code == 0
 
     # ─── cli.py: linhas 219-222 (mcp command) ───
@@ -139,7 +139,7 @@ class TestCoverageGaps:
 
         with patch("eizo.mcp.server.serve_mcp") as mock_serve:
             runner = CliRunner()
-            result = runner.invoke(main, ["mcp", "--port", "9999", "--path", str(tmp_path)])
+            result = runner.invoke(main, ["mcp", "--port", "9999", "--repo", str(tmp_path)])
             assert result.exit_code == 0
             mock_serve.assert_called_once()
 

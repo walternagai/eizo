@@ -16,7 +16,12 @@ from click.testing import CliRunner
 from eizo.cli import main
 from eizo.graph.models import Edge, Node
 from eizo.graph.store import GraphStore
-from eizo.queries.export import export_dot, export_json, export_mermaid
+from eizo.queries.export import (
+    export_architecture_mermaid,
+    export_dot,
+    export_json,
+    export_mermaid,
+)
 
 # ─── Fixtures ──────────────────────────────────────────────────
 
@@ -278,7 +283,7 @@ class TestCliExport:
         index_repository(repo, store, force=True)
 
         runner = CliRunner()
-        result = runner.invoke(main, ["export", "dot", "--path", str(repo)])
+        result = runner.invoke(main, ["export", "dot", "--repo", str(repo)])
         assert result.exit_code == 0
         assert "digraph" in result.output
 
@@ -292,7 +297,7 @@ class TestCliExport:
         index_repository(repo, store, force=True)
 
         runner = CliRunner()
-        result = runner.invoke(main, ["export", "mermaid", "--path", str(repo)])
+        result = runner.invoke(main, ["export", "mermaid", "--repo", str(repo)])
         assert result.exit_code == 0
         assert "flowchart" in result.output
 
@@ -306,7 +311,7 @@ class TestCliExport:
         index_repository(repo, store, force=True)
 
         runner = CliRunner()
-        result = runner.invoke(main, ["export", "json", "--path", str(repo)])
+        result = runner.invoke(main, ["export", "json", "--repo", str(repo)])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert "nodes" in parsed
@@ -324,7 +329,7 @@ class TestCliExport:
         output_file = tmp_path / "graph.dot"
         runner = CliRunner()
         result = runner.invoke(
-            main, ["export", "dot", "-o", str(output_file), "--path", str(repo)]
+            main, ["export", "dot", "-o", str(output_file), "--repo", str(repo)]
         )
         assert result.exit_code == 0
         assert "exportado" in result.output
@@ -344,7 +349,7 @@ class TestCliExport:
 
         runner = CliRunner()
         result = runner.invoke(
-            main, ["export", "json", "--kind", "class", "--path", str(repo)]
+            main, ["export", "json", "--kind", "class", "--repo", str(repo)]
         )
         assert result.exit_code == 0
         parsed = json.loads(result.output)
@@ -363,7 +368,7 @@ class TestCliExport:
 
         runner = CliRunner()
         result = runner.invoke(
-            main, ["export", "mermaid", "--diagram-type", "classDiagram", "--path", str(repo)]
+            main, ["export", "mermaid", "--diagram-type", "classDiagram", "--repo", str(repo)]
         )
         assert result.exit_code == 0
         assert "classDiagram" in result.output
@@ -371,12 +376,71 @@ class TestCliExport:
     def test_export_empty_store(self, tmp_path: Path) -> None:
         """export em store vazio não falha."""
         runner = CliRunner()
-        result = runner.invoke(main, ["export", "dot", "--path", str(tmp_path)])
+        result = runner.invoke(main, ["export", "dot", "--repo", str(tmp_path)])
         assert result.exit_code == 0
         assert "digraph" in result.output
 
     def test_export_invalid_format(self, tmp_path: Path) -> None:
         """Formato inválido retorna erro."""
         runner = CliRunner()
-        result = runner.invoke(main, ["export", "invalid", "--path", str(tmp_path)])
+        result = runner.invoke(main, ["export", "invalid", "--repo", str(tmp_path)])
         assert result.exit_code != 0
+
+
+# ─── export_architecture_mermaid ───────────────────────────────
+
+
+class TestExportArchitectureMermaid:
+    """Testa export_architecture_mermaid()."""
+
+    def test_architecture_mermaid_header(self, export_store: GraphStore) -> None:
+        """Diagrama arquitetural começa com 'graph TD'."""
+        result = export_architecture_mermaid(export_store)
+        assert result.startswith("graph TD")
+
+    def test_architecture_mermaid_contains_subgraphs(self, export_store: GraphStore) -> None:
+        """Diagrama contém subgraphs representando camadas."""
+        result = export_architecture_mermaid(export_store)
+        assert "subgraph" in result
+        assert "Other" in result
+
+    def test_architecture_mermaid_contains_components(self, export_store: GraphStore) -> None:
+        """Diagrama lista componentes (arquivos) dentro das camadas."""
+        result = export_architecture_mermaid(export_store)
+        # A fixture tem a.py, b.py, c.py, d.py — todos cairão em 'other'
+        for stem in ("a", "b", "c", "d"):
+            assert stem in result
+
+    def test_architecture_mermaid_contains_descriptions(self, export_store: GraphStore) -> None:
+        """Diagrama inclui descrições de componentes."""
+        result = export_architecture_mermaid(export_store)
+        assert "component" in result
+
+    def test_architecture_mermaid_stats_subgraph(self, export_store: GraphStore) -> None:
+        """Diagrama inclui subgraph de estatísticas."""
+        result = export_architecture_mermaid(export_store)
+        assert "subgraph Stats" in result
+        assert "Total nodes" in result
+        assert "Total edges" in result
+
+    def test_architecture_mermaid_empty_store(self, store: GraphStore) -> None:
+        """Store vazio retorna diagrama com mensagem informativa."""
+        result = export_architecture_mermaid(store)
+        assert result.startswith("graph TD")
+        assert "Grafo vazio" in result
+
+    def test_architecture_mermaid_component_edges_with_known_paths(self) -> None:
+        """Dependências entre componentes aparecem quando paths são reconhecidos."""
+        from eizo.graph.models import Edge, Node
+
+        s = GraphStore(Path("/tmp/eizo_arch_test_" + str(id(self))))
+        s.upsert_nodes([
+            Node(id="q1", name="search", kind="function", file_path="src/queries/search.py", language="python"),
+            Node(id="g1", name="store", kind="class", file_path="src/graph/store.py", language="python"),
+        ])
+        s.upsert_edges([Edge(source_id="q1", target_id="g1", kind="calls")])
+        result = export_architecture_mermaid(s)
+        assert "-->" in result
+        assert "comp_queries_search_py" in result
+        assert "comp_graph_store_py" in result
+        s.close()

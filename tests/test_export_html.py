@@ -173,7 +173,7 @@ class TestExportHtmlCli:
         assert init_result.exit_code == 0
 
         out_file = tmp_path / "graph.html"
-        export_result = runner.invoke(main, ["export", "html", "--path", str(repo), "-o", str(out_file)])
+        export_result = runner.invoke(main, ["export", "html", "--repo", str(repo), "-o", str(out_file)])
         assert export_result.exit_code == 0
         assert out_file.exists()
 

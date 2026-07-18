@@ -12,6 +12,7 @@ from typing import Any, Literal
 from mcp.server.fastmcp import FastMCP
 
 from eizo.graph.store import GraphStore
+from eizo.queries import export as export_q
 from eizo.queries import impact as impact_q
 from eizo.queries import search as search_q
 from eizo.queries import trace as trace_q
@@ -122,6 +123,16 @@ def create_server(store: GraphStore, port: int = 8765) -> FastMCP:
             "by_edge_kind": stats.by_edge_kind,
             "db_size_bytes": stats.db_size_bytes,
         }, indent=2, default=str)
+
+    @mcp.tool()
+    def get_architecture_mermaid() -> str:
+        """Retorna diagrama de arquitetura do repositório em Mermaid.
+
+        O diagrama mostra as camadas do sistema (CLI/MCP, queries, graph
+        store, parsers, indexer) e as dependências entre elas derivadas do
+        grafo de conhecimento.
+        """
+        return export_q.export_architecture_mermaid(store)
 
     @mcp.tool()
     def find_dead_code_symbols(

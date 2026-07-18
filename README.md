@@ -186,6 +186,109 @@ Símbolos por Tipo
 └──────────┴──────────┘
 ```
 
+### Diagrama de arquitetura em Mermaid
+
+Gera um diagrama de alto nível em camadas, renderizável no GitHub/GitLab/Notion:
+
+```bash
+eizo architecture -o arch.mmd
+```
+
+Exemplo do diagrama gerado para o próprio Eizō:
+
+```mermaid
+graph TD
+  classDef layerClass fill:#f9f,stroke:#333,stroke-width:2px;
+  classDef componentClass fill:#e1f5e1,stroke:#333,stroke-width:1px;
+  classDef statsClass fill:#fff4cc,stroke:#333,stroke-width:1px;
+  subgraph entrypoints["Entrypoints (CLI / MCP)"]
+    comp_cli_py["cli<br/>CLI Click<br/>~316 symbols, 18 links"]
+    class comp_cli_py componentClass;
+    comp_mcp_server_py["server<br/>MCP server<br/>~59 symbols, 7 links"]
+    class comp_mcp_server_py componentClass;
+    comp___main___py["__main__<br/>entry point<br/>~3 symbols, 2 links"]
+    class comp___main___py componentClass;
+  end
+  class comp_cli_py layerClass;
+  subgraph queries["Query Layer"]
+    comp_queries_analysis_py["analysis<br/>dead code & hotspots<br/>~28 symbols, 7 links"]
+    class comp_queries_analysis_py componentClass;
+    comp_queries_export_py["export<br/>DOT/Mermaid/JSON/HTML export<br/>~131 symbols, 6 links"]
+    class comp_queries_export_py componentClass;
+    comp_queries_trace_py["trace<br/>call graph trace<br/>~27 symbols, 5 links"]
+    class comp_queries_trace_py componentClass;
+    comp_queries_search_py["search<br/>symbol search<br/>~23 symbols, 5 links"]
+    class comp_queries_search_py componentClass;
+    comp_queries_impact_py["impact<br/>impact analysis<br/>~17 symbols, 5 links"]
+    class comp_queries_impact_py componentClass;
+  end
+  class comp_queries_analysis_py layerClass;
+  subgraph graph["Graph Layer"]
+    comp_graph_store_py["store<br/>SQLite CRUD<br/>~181 symbols, 20 links"]
+    class comp_graph_store_py componentClass;
+    comp_graph_models_py["models<br/>Node/Edge models<br/>~15 symbols, 12 links"]
+    class comp_graph_models_py componentClass;
+    comp_graph_schema_py["schema<br/>DB schema<br/>~31 symbols, 2 links"]
+    class comp_graph_schema_py componentClass;
+  end
+  class comp_graph_store_py layerClass;
+  subgraph parsers["Language Parsers"]
+    comp_parser_base_py["base<br/>parser base<br/>~12 symbols, 7 links"]
+    class comp_parser_base_py componentClass;
+    comp_parser_typescript_py["typescript<br/>TypeScript parser<br/>~120 symbols, 6 links"]
+    class comp_parser_typescript_py componentClass;
+    comp_parser_python_py["python<br/>Python parser<br/>~109 symbols, 6 links"]
+    class comp_parser_python_py componentClass;
+  end
+  class comp_parser_base_py layerClass;
+  subgraph indexer["Indexer"]
+    comp_indexer_py["indexer<br/>orchestrates indexing<br/>~99 symbols, 10 links"]
+    class comp_indexer_py componentClass;
+  end
+  class comp_indexer_py layerClass;
+  comp___main___py -->|"calls, imports"| comp_cli_py
+  comp_cli_py -->|"calls, imports"| comp_graph_store_py
+  comp_cli_py -->|"calls, imports"| comp_indexer_py
+  comp_cli_py -->|"calls, imports"| comp_mcp_server_py
+  comp_cli_py -->|"calls, imports"| comp_queries_analysis_py
+  comp_cli_py -->|"calls, imports"| comp_queries_export_py
+  comp_cli_py -->|"calls, imports"| comp_queries_impact_py
+  comp_cli_py -->|"calls, imports"| comp_queries_search_py
+  comp_cli_py -->|"calls, imports"| comp_queries_trace_py
+  comp_graph_store_py -->|"calls, imports"| comp_graph_models_py
+  comp_graph_store_py -->|"calls, imports"| comp_graph_schema_py
+  comp_indexer_py -->|"calls, imports"| comp_graph_store_py
+  comp_indexer_py -->|"calls, imports"| comp_parser_base_py
+  comp_indexer_py -->|"calls, imports"| comp_parser_python_py
+  comp_indexer_py -->|"calls, imports"| comp_parser_typescript_py
+  comp_mcp_server_py -->|"calls, imports"| comp_graph_store_py
+  comp_mcp_server_py -->|"calls, imports"| comp_queries_analysis_py
+  comp_mcp_server_py -->|"calls"| comp_queries_export_py
+  comp_parser_base_py -->|"imports"| comp_graph_models_py
+  comp_parser_python_py -->|"calls, imports"| comp_graph_models_py
+  comp_parser_python_py -->|"imports, inherits"| comp_parser_base_py
+  comp_parser_typescript_py -->|"calls, imports"| comp_graph_models_py
+  comp_parser_typescript_py -->|"imports, inherits"| comp_parser_base_py
+  comp_queries_analysis_py -->|"imports"| comp_graph_models_py
+  comp_queries_analysis_py -->|"calls, imports"| comp_graph_store_py
+  comp_queries_export_py -->|"imports"| comp_graph_models_py
+  comp_queries_export_py -->|"calls, imports"| comp_graph_store_py
+  comp_queries_impact_py -->|"imports"| comp_graph_models_py
+  comp_queries_impact_py -->|"calls, imports"| comp_graph_store_py
+  comp_queries_search_py -->|"imports"| comp_graph_models_py
+  comp_queries_search_py -->|"calls, imports"| comp_graph_store_py
+  comp_queries_trace_py -->|"imports"| comp_graph_models_py
+  comp_queries_trace_py -->|"calls, imports"| comp_graph_store_py
+
+  subgraph Stats["Repository Stats"]
+    total_nodes["Total nodes: 8601"]
+    total_edges["Total edges: 16260"]
+    total_files["Total files: 43"]
+    languages["Languages: typescript, python"]
+  end
+  class total_nodes,total_edges,total_files,languages statsClass;
+```
+
 ### Servidor MCP
 
 ```bash
@@ -202,7 +305,7 @@ eizo mcp --transport stdio
 eizo mcp --path /caminho/do/projeto
 ```
 
-O servidor expõe 7 ferramentas MCP:
+O servidor expõe 8 ferramentas MCP:
 
 | Tool | Descrição |
 |------|-----------|
@@ -211,6 +314,7 @@ O servidor expõe 7 ferramentas MCP:
 | `trace_call_path` | Call graph de/para um símbolo |
 | `analyze_impact` | Cadeia de dependências |
 | `get_architecture` | Visão arquitetural do repositório |
+| `get_architecture_mermaid` | Diagrama de arquitetura em Mermaid |
 | `find_dead_code_symbols` | Detecta código morto |
 | `get_hotspots` | Símbolos mais referenciados |
 
@@ -231,7 +335,8 @@ eizo status
 | `eizo arch` | Visão arquitetural |
 | `eizo dead` | Detecta código morto (sem callers) |
 | `eizo hotspots` | Símbolos mais referenciados |
-| `eizo export dot\|mermaid\|json` | Exporta grafo para visualização |
+| `eizo export dot\|mermaid\|json\|html` | Exporta grafo para visualização |
+| `eizo architecture` | Gera diagrama de arquitetura em Mermaid |
 | `eizo mcp` | Servidor MCP |
 | `eizo status` | Estatísticas do grafo |
 

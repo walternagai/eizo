@@ -305,7 +305,7 @@ class TestCliDead:
     def test_dead_no_results(self, tmp_path: Path) -> None:
         """Dead em repositório vazio."""
         runner = CliRunner()
-        result = runner.invoke(main, ["dead", "--path", str(tmp_path)])
+        result = runner.invoke(main, ["dead", "--repo", str(tmp_path)])
         assert result.exit_code == 0
         assert "Nenhum código morto" in result.output
 
@@ -324,7 +324,7 @@ class TestCliDead:
 
         runner = CliRunner()
         result = runner.invoke(
-            main, ["--format", "json", "dead", "--path", str(repo)]
+            main, ["--output-format", "json", "dead", "--repo", str(repo)]
         )
         assert result.exit_code == 0
         names = {n["name"] for n in json.loads(result.output)}
@@ -343,7 +343,7 @@ class TestCliDead:
         index_repository(repo, store, force=True)
 
         runner = CliRunner()
-        result = runner.invoke(main, ["--format", "json", "dead", "--path", str(repo)])
+        result = runner.invoke(main, ["--output-format", "json", "dead", "--repo", str(repo)])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert isinstance(parsed, list)
@@ -359,7 +359,7 @@ class TestCliDead:
 
         runner = CliRunner()
         result = runner.invoke(
-            main, ["dead", "--entrypoint", "my_entry", "--path", str(repo)]
+            main, ["dead", "--entrypoint", "my_entry", "--repo", str(repo)]
         )
         assert result.exit_code == 0
 
@@ -373,7 +373,7 @@ class TestCliHotspots:
     def test_hotspots_empty(self, tmp_path: Path) -> None:
         """Hotspots em repositório vazio."""
         runner = CliRunner()
-        result = runner.invoke(main, ["hotspots", "--path", str(tmp_path)])
+        result = runner.invoke(main, ["hotspots", "--repo", str(tmp_path)])
         assert result.exit_code == 0
         assert "Nenhum hotspot" in result.output
 
@@ -391,7 +391,7 @@ class TestCliHotspots:
         index_repository(repo, store, force=True)
 
         runner = CliRunner()
-        result = runner.invoke(main, ["hotspots", "--path", str(repo), "--min-refs", "1"])
+        result = runner.invoke(main, ["hotspots", "--repo", str(repo), "--min-refs", "1"])
         assert result.exit_code == 0
         assert "Hotspots" in result.output or "Nenhum hotspot" in result.output
 
@@ -408,7 +408,7 @@ class TestCliHotspots:
 
         runner = CliRunner()
         result = runner.invoke(
-            main, ["--format", "json", "hotspots", "--path", str(repo), "--min-refs", "1"]
+            main, ["--output-format", "json", "hotspots", "--repo", str(repo), "--min-refs", "1"]
         )
         assert result.exit_code == 0
         parsed = json.loads(result.output)

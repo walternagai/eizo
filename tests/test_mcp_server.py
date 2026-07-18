@@ -119,7 +119,7 @@ class TestCreateServer:
         mcp = create_server(store, port=12345)
         assert isinstance(mcp, FastMCP)
 
-    def test_all_five_tools_registered(self, store: GraphStore) -> None:
+    def test_all_tools_registered(self, store: GraphStore) -> None:
         """As tools MCP devem estar registradas com os nomes esperados."""
         mcp = create_server(store, port=12345)
         tool_names = set(mcp._tool_manager._tools.keys())
@@ -129,6 +129,7 @@ class TestCreateServer:
             "trace_call_path",
             "analyze_impact",
             "get_architecture",
+            "get_architecture_mermaid",
             "find_dead_code_symbols",
             "get_hotspots",
         }
@@ -308,6 +309,22 @@ class TestCreateServer:
         parsed = json.loads(result)
         assert parsed["total_nodes"] == 0
         assert parsed["total_edges"] == 0
+
+    def test_get_architecture_mermaid(self, populated_store: GraphStore) -> None:
+        """get_architecture_mermaid retorna diagrama Mermaid."""
+        mcp = create_server(populated_store, port=12345)
+        fn = _get_tool_fn(mcp, "get_architecture_mermaid")
+        result = fn()
+        assert result.startswith("graph TD")
+        assert "Total nodes" in result
+
+    def test_get_architecture_mermaid_empty_store(self, store: GraphStore) -> None:
+        """get_architecture_mermaid com store vazio retorna mensagem informativa."""
+        mcp = create_server(store, port=12345)
+        fn = _get_tool_fn(mcp, "get_architecture_mermaid")
+        result = fn()
+        assert result.startswith("graph TD")
+        assert "Grafo vazio" in result
 
 
 # ─── serve_mcp ───
