@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from eizo.cli import main
@@ -297,6 +298,32 @@ class TestCliVersion:
         result = runner.invoke(main, ["--version"])
         assert result.exit_code == 0
         assert "0.1.0" in result.output
+
+
+class TestCliCompletion:
+    """Testes para shell completion."""
+
+    @pytest.mark.parametrize("shell", ["bash", "zsh", "fish"])
+    def test_show_completion(self, shell: str) -> None:
+        """--show-completion <shell> emite script de completion."""
+        runner = CliRunner()
+        result = runner.invoke(main, ["--show-completion", shell])
+        assert result.exit_code == 0
+        assert "_EIZO_COMPLETE" in result.output
+
+    @pytest.mark.parametrize("shell", ["bash", "zsh", "fish"])
+    def test_install_completion(self, shell: str) -> None:
+        """--install-completion <shell> emite script de completion."""
+        runner = CliRunner()
+        result = runner.invoke(main, ["--install-completion", shell])
+        assert result.exit_code == 0
+        assert "_EIZO_COMPLETE" in result.output
+
+    def test_completion_invalid_shell(self) -> None:
+        """Shell inválido retorna erro."""
+        runner = CliRunner()
+        result = runner.invoke(main, ["--show-completion", "invalid"])
+        assert result.exit_code != 0
 
 
 class TestCliArchitecture:

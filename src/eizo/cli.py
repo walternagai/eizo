@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 import click
+from click.shell_completion import get_completion_class
 from rich.console import Console
 from rich.table import Table
 from rich.tree import Tree
@@ -162,7 +163,27 @@ def _merge_config(
     return merged
 
 
-@click.group()
+def _install_completion(shell: str) -> str:
+    """Gera ou instala script de shell completion para eizo.
+
+    Retorna o script como string para ser exibido ou redirecionado.
+    """
+    cls = get_completion_class(shell)
+    if cls is None:
+        return f"Shell '{shell}' não suportado. Use bash, zsh ou fish."
+    complete = cls(
+        cli=main,
+        ctx_args={},
+        prog_name="eizo",
+        complete_var="_EIZO_COMPLETE",
+    )
+    return complete.source()
+
+
+SUPPORTED_SHELLS = ("bash", "zsh", "fish")
+
+
+@click.group(invoke_without_command=True)
 @click.version_option(version="0.1.0", prog_name="eizo")
 @click.option(
     "--output-format",
@@ -185,18 +206,44 @@ def _merge_config(
     default=None,
     help="Caminho alternativo para arquivo de configuração JSON",
 )
+@click.option(
+    "--install-completion",
+    "install_completion",
+    type=click.Choice(SUPPORTED_SHELLS),
+    default=None,
+    help="Instala shell completion e sai (bash/zsh/fish)",
+)
+@click.option(
+    "--show-completion",
+    "show_completion",
+    type=click.Choice(SUPPORTED_SHELLS),
+    default=None,
+    help="Mostra script de shell completion e sai (bash/zsh/fish)",
+)
 @click.pass_context
 def main(
     ctx: click.Context,
     output_format: str,
     no_color: bool,
     config_path: str | None,
+    install_completion: str | None,
+    show_completion: str | None,
 ) -> None:
     """映像 — Codebase Knowledge Graph CLI.
 
     Parseia codebases com Tree-sitter, constrói grafo de conhecimento
     em SQLite, e expõe queries via CLI e MCP.
     """
+    if install_completion:
+        script = _install_completion(install_completion)
+        click.echo(script)
+        ctx.exit()
+
+    if show_completion:
+        script = _install_completion(show_completion)
+        click.echo(script)
+        ctx.exit()
+
     ctx.ensure_object(dict)
     ctx.obj["format"] = output_format
     ctx.obj["format_explicit"] = output_format != "table"

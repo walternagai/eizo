@@ -44,6 +44,14 @@ make coverage    # pytest --cov=src/eizo --cov-report=term-missing
   - `"min_refs"`: integer (`>= 1`), used by `hotspots`.
 - Invalid JSON prints a warning and falls back to defaults.
 
+## Shell completion
+
+- Supported via Click's built-in completion mechanism.
+- `--show-completion [bash|zsh|fish]` prints the completion script.
+- `--install-completion [bash|zsh|fish]` prints the same script (redirect to
+  your shell config file to install).
+- Completion variables use the prefix `_EIZO_COMPLETE`.
+
 ## Architecture
 
 ```
