@@ -13,7 +13,7 @@ import sqlite3
 from pathlib import Path
 
 from eizo.graph.models import Node
-from eizo.graph.schema import ensure_db_dir, open_db
+from eizo.graph.schema import SCHEMA_VERSION, ensure_db_dir, open_db
 from eizo.graph.store import GraphStore
 from eizo.indexer import index_repository
 
@@ -272,8 +272,8 @@ class TestFtsSearch:
 class TestSchemaMigration:
     """Testa migração de schema v1 → v2."""
 
-    def test_migrate_v1_to_v2_adds_file_index(self, tmp_path: Path) -> None:
-        """DB criado na v1 recebe tabela file_index após migração."""
+    def test_migrate_v1_adds_file_index(self, tmp_path: Path) -> None:
+        """DB criado na v1 recebe file_index e nodes_fts, e chega à versão corrente."""
         db_path = ensure_db_dir(tmp_path)
         conn = sqlite3.connect(str(db_path))
 
@@ -290,7 +290,7 @@ class TestSchemaMigration:
         conn.commit()
         conn.close()
 
-        # Abre via open_db — deve detectar v1 e migrar para v2
+        # Abre via open_db — deve detectar v1 e migrar até a versão corrente
         conn = open_db(db_path)
 
         # Verifica que file_index foi criada
@@ -307,18 +307,83 @@ class TestSchemaMigration:
 
         # Versão atualizada
         row = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
-        assert row[0] == "2"
+        assert row[0] == str(SCHEMA_VERSION)
 
         conn.close()
 
-    def test_migrate_already_v2_is_noop(self, tmp_path: Path) -> None:
-        """DB já na v2 não migra novamente."""
+    def test_migrate_already_current_is_noop(self, tmp_path: Path) -> None:
+        """DB já na versão corrente não migra novamente."""
         db_path = ensure_db_dir(tmp_path)
-        conn = open_db(db_path)  # Cria na v2
+        conn = open_db(db_path)  # Cria já na versão corrente
         conn.close()
 
         # Reabre — não deve falhar nem duplicar
         conn = open_db(db_path)
         row = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
-        assert row[0] == "2"
+        assert row[0] == str(SCHEMA_VERSION)
         conn.close()
+
+
+class TestIndexingScales:
+    """Trava a escalabilidade da indexação (regressão do FTS quadrático).
+
+    Até o schema v2, remover entradas de `nodes_fts` usava `WHERE node_id = ?` —
+    coluna UNINDEXED, logo varredura completa do índice por nó removido. O custo
+    de reindexar um arquivo crescia com o tamanho do repositório inteiro.
+
+    Medimos passos da VM do SQLite via `set_progress_handler`, não tempo de
+    parede: o número é determinístico e não depende da carga da máquina.
+    """
+
+    @staticmethod
+    def _batch(prefix: str, file_path: str, n: int) -> list[Node]:
+        return [
+            Node(id=f"{prefix}{i}", name=f"{prefix}_{i}", kind="function",
+                 file_path=file_path, language="python", line_start=i, line_end=i)
+            for i in range(n)
+        ]
+
+    @staticmethod
+    def _vm_steps(store: GraphStore, batch: list[Node]) -> int:
+        """Passos da VM do SQLite gastos ao reindexar `batch`."""
+        steps = 0
+
+        def handler() -> int:
+            nonlocal steps
+            steps += 1
+            return 0
+
+        store.conn.set_progress_handler(handler, 1000)
+        try:
+            store.upsert_nodes(batch)
+        finally:
+            store.conn.set_progress_handler(None, 0)
+        return steps
+
+    def test_fts_index_matches_node_count(self, store: GraphStore) -> None:
+        """O índice FTS acompanha o número de nós, sem inflar."""
+        for b in range(20):
+            store.upsert_nodes(self._batch(f"b{b}n", f"/f{b}.py", 25))
+        n_fts = store.conn.execute("SELECT count(*) FROM nodes_fts").fetchone()[0]
+        n_nodes = store.conn.execute("SELECT count(*) FROM nodes").fetchone()[0]
+        assert n_fts == n_nodes == 500
+
+    def test_reindex_cost_independent_of_index_size(self, store: GraphStore) -> None:
+        """Reindexar um arquivo custa o mesmo com índice pequeno ou 80x maior.
+
+        Com a varredura de v2 a razão passa de 70x; com o rowid ancorado fica
+        perto de 1x. O limite de 5x separa os dois casos com folga.
+        """
+        alvo = self._batch("alvo", "/alvo.py", 50)
+        store.upsert_nodes(alvo)
+        baseline = self._vm_steps(store, alvo)
+
+        for b in range(40):  # infla o índice com 4000 nós de outros arquivos
+            store.upsert_nodes(self._batch(f"ruido{b}_", f"/ruido{b}.py", 100))
+
+        inflated = self._vm_steps(store, alvo)
+
+        assert inflated <= max(baseline, 1) * 5, (
+            f"custo de reindexação cresceu com o tamanho do índice: "
+            f"{baseline} -> {inflated} passos de VM (índice 80x maior)"
+        )

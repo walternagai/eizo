@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from eizo.graph.schema import ensure_db_dir, get_db_path, init_db, open_db
+from eizo.graph.schema import SCHEMA_VERSION, ensure_db_dir, get_db_path, init_db, open_db
 
 
 class TestSchema:
@@ -55,7 +55,7 @@ class TestSchema:
             "SELECT value FROM meta WHERE key = 'schema_version'"
         ).fetchone()
         assert row is not None
-        assert row[0] == "2"
+        assert row[0] == str(SCHEMA_VERSION)
 
         conn.close()
 
