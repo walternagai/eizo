@@ -1,0 +1,101 @@
+task: melhorar-eizo
+status: approved
+base_commit: "c850efb06309ddee50337666d3548fc410047937"
+fit:
+  trivial: false
+  route: code-loop
+  reason: >-
+    Pedido inicial ambíguo ("melhorar o eizo"). Diagnóstico revelou 27 testes
+    MCP falhando por venv inconsistente. Usuário escolheu 4 frentes: (1) suíte
+    quebrada, (2) robustez/erros, (3) performance de indexação, (4) features.
+    (1)-(3) entregues; (4) permanece plan-first por falta de spec.
+think:
+  problem: >-
+    Três defeitos independentes: (a) mcp 1.28.1 exige pydantic>=2.11 mas o venv
+    compartilhado tinha 2.10.3, quebrando create_server() e 27 testes;
+    (b) consultar repo não indexado criava grafo vazio silenciosamente e
+    reportava "nenhum resultado", e banco corrompido vazava traceback de
+    sqlite3; (c) nodes_fts.node_id é UNINDEXED, então DELETE por node_id varria
+    o índice inteiro por nó, tornando a indexação quadrática.
+  assumptions:
+    - "Nenhum pacote instalado limita pydantic<2.11 — verificado via importlib.metadata"
+    - "REFUTADA em execução: node_id nem sempre é hex de 16 chars; a API pública
+       do GraphStore aceita ids arbitrários. Corrigido para hash blake2b."
+    - "Ids de nó podem repetir dentro de um mesmo arquivo (minificados) — descoberto
+       ao rodar; exigiu deduplicação em upsert_nodes."
+  alternatives:
+    - "Contornar create_model anotando tools — rejeitado: trata sintoma, não causa"
+    - "FTS5 external content table — rejeitado: nodes.id é TEXT, sem rowid estável"
+    - "DELETE ... WHERE node_id IN (...) — rejeitado: reduz o fator, segue quadrático"
+  unknowns: ""
+  answered: true
+simplify:
+  minimum_code: true
+  no_single_use_abstractions: true
+  no_speculative_config: true
+  note: >-
+    fts_rowid foi inicialmente duplicado em store.py e schema.py; consolidado em
+    schema.py (store.py já o importava) para eliminar a duplicação.
+intent:
+  code_does: "consultar repo não indexado retornava 'nenhum resultado', exit 0"
+  check_expects: "5+ testes fixavam esse comportamento (test_search_no_results etc.)"
+  spec_says: "README/AGENTS.md não documentavam o caso"
+  all_agree: false
+  resolution: >-
+    Usuário decidiu: erro acionável com exit 1, distinguindo 'não indexado' de
+    'indexado porém vazio'. Testes migrados para a fixture indexed_empty_repo,
+    preservando a intenção original de cada um.
+  answered: true
+surgical:
+  files:
+    - {path: pyproject.toml, necessary: true, reason: "piso mcp>=1.28"}
+    - {path: src/eizo/cli.py, necessary: true, reason: "_open_store + 9 call sites"}
+    - {path: src/eizo/graph/schema.py, necessary: true, reason: "fts_rowid + migração v3"}
+    - {path: src/eizo/graph/store.py, necessary: true, reason: "FTS por rowid + dedup"}
+    - {path: AGENTS.md, necessary: true, reason: "documenta schema v3, erros e pin"}
+    - {path: tests/, necessary: true, reason: "12 testes migrados, 21 adicionados"}
+  removed_imports_clean: true
+verify:
+  ruff_clean: true
+  mypy_clean: true
+  tests_pass: true
+  tests_total: 451
+  coverage_pct: 98.95
+  coverage_pass: true
+  success_criteria_met: true
+  measurements:
+    suite_before: "403 passed, 27 failed"
+    suite_after: "451 passed"
+    index_120_files: "15.33s -> 0.94s (16x)"
+    index_186_files: ">120s (timeout) -> 12.8s"
+    cost_per_file: "crescia 0.033->0.128 s/arq; agora constante ~0.008 s/arq"
+    regression_test_power: "verificado: falha com o bug reintroduzido (33 -> 2433 passos de VM)"
+artifact:
+  intent_owed: true
+  intent_present: true
+  auth_owed: true
+  auth_present: true
+  pending_owed: true
+  pending_present: true
+  twins_owed: true
+  twins_present: true
+auth:
+  action_taken: true
+  authorized: true
+  detail: >-
+    Usuário autorizou `pip install --upgrade pydantic` no venv compartilhado
+    /home/walternagai/dev/.venv (2.10.3 -> 2.13.4), após ver a evidência de que
+    nenhum pacote instalado limita pydantic<2.11.
+pending:
+  action: "Frente (4) 'novas features' não foi executada"
+  documented: true
+  detail: >-
+    Escolhida pelo usuário mas sem especificação (quais parsers? quais comandos?
+    quais tools MCP?). Requer rota plan-first com escopo definido.
+twins:
+  pattern: "GraphStore instanciado direto em caminho de leitura; DELETE em nodes_fts por node_id"
+  result: >-
+    Varridos todos os call sites: 10 de GraphStore em cli.py (9 migrados para
+    _open_store, init mantido) e 2 DELETEs em store.py (ambos migrados para
+    rowid). clear_all usa DELETE sem WHERE, não afetado.
+  searched: true
