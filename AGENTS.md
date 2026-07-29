@@ -15,7 +15,7 @@ make coverage    # pytest --cov=src/eizo --cov-report=term-missing
 
 ## Entry points
 
-- `eizo` CLI: `eizo.cli:main` (Click group, 12 commands)
+- `eizo` CLI: `eizo.cli:main` (Click group, 16 commands)
 - `python -m eizo`: `eizo/__main__.py` → `cli.main()`
 - `eizo.mcp.server.serve_mcp()`: FastMCP server, invoked via `eizo mcp`
 
@@ -99,6 +99,30 @@ make coverage    # pytest --cov=src/eizo --cov-report=term-missing
 - A `call` node referencing a symbol whose definition file was deleted stays:
   the calling file still exists and still contains that reference.
 
+## Ignore patterns
+
+- `.gitignore` and `.eizoignore` at the **root of the indexed repo** are
+  combined (via `pathspec`, gitignore syntax) and applied during the walk —
+  both directory pruning and file filtering. Nested `.gitignore` files
+  (subdirectories) are not read, unlike real git.
+- `.eizoignore` is for excluding from the graph something git *does* track —
+  e.g. a vendored `.min.js` shipped as package data. It doesn't affect what
+  git tracks, only what eizo indexes.
+- Directory-only patterns (`dist/`) only match `pathspec.match_file()` when
+  the tested path also ends in `/` — plain `dirname` without the trailing
+  slash silently never matches a `dirname/` pattern.
+
+## Watch mode
+
+- `eizo watch` polls (`time.sleep(interval)`, default 2s) and reuses
+  `index_repository`'s incremental logic — no filesystem-event dependency
+  (no `watchdog`).
+- Change detection for the printed summary line compares `get_indexed_files()`
+  and `get_stats()` before/after each tick — an edit that doesn't change node
+  count (e.g. only a function body, same symbol count) produces no summary
+  line. This is a stated tradeoff, not a bug: recomputing a hash-based diff
+  purely for the summary would add an extra file read per tick.
+
 ## Dry-run
 
 - `eizo init --dry-run` lists files that would be indexed without persisting
@@ -109,12 +133,14 @@ make coverage    # pytest --cov=src/eizo --cov-report=term-missing
 
 ```
 src/eizo/
-├── cli.py          # Click commands (init, search, trace, impact, arch, mcp, status, dead, hotspots, export)
+├── cli.py          # Click commands (init, watch, diff, search, trace, why, impact,
+│                    #   arch, mcp, status, dead, cycles, hotspots, metrics, export)
 ├── indexer.py      # Orchestrator: scan repo → parse files → persist to SQLite (incremental)
 ├── graph/
 │   ├── models.py   # Node, Edge, GraphStats dataclasses
-│   ├── schema.py   # SQLite schema (v2), get_db_path(), open_db(), migrate_db()
-│   └── store.py    # GraphStore CRUD (upsert, search, FTS5, file_index, trace, stats)
+│   ├── schema.py   # SQLite schema (v3), get_db_path(), open_db(), migrate_db(), fts_rowid()
+│   └── store.py    # GraphStore CRUD (upsert, search, FTS5, file_index, trace, stats,
+│                    #   get_file_import_graph, get_indexed_files)
 ├── parser/
 │   ├── base.py     # Abstract BaseParser
 │   ├── python.py   # Tree-sitter Python parser
@@ -122,8 +148,12 @@ src/eizo/
 ├── queries/
 │   ├── search.py   # search_symbols(), get_symbol_context()
 │   ├── trace.py    # trace_call_path() — call graph traversal
+│   ├── why.py      # find_dependency_path() — shortest path between two symbols
 │   ├── impact.py   # analyze_impact() — dependency chain
-│   ├── analysis.py # find_dead_code(), find_hotspots()
+│   ├── analysis.py # find_dead_code(), find_hotspots(), real_referrers()
+│   ├── cycles.py   # find_import_cycles() — Tarjan SCC over the file-level import graph
+│   ├── metrics.py  # compute_symbol_metrics() — fan-in/fan-out/LOC
+│   ├── diff.py     # diff_against_ref() — symbol-level diff vs a git ref
 │   └── export.py   # export_dot(), export_mermaid(), export_json()
     └── mcp/
     │       └── server.py   # FastMCP server (8 tools)
@@ -162,22 +192,26 @@ src/eizo/
 
 ## Testing
 
-- `store` fixture: `GraphStore(tmp_path)` — SQLite in temp dir.
+- `store` fixture: `GraphStore(tmp_path)` — SQLite in temp dir. `indexed_empty_repo`
+  fixture: a repo whose `.eizo/graph.db` exists but has no symbols — distinct
+  from a bare `tmp_path`, which query commands reject as *not indexed*.
 - `sample_python_file` / `sample_ts_file`: string fixtures for parser tests.
 - `sample_python_repo`: creates real dir tree for indexer tests.
-- `store` fixture: `GraphStore(tmp_path)`. `indexed_empty_repo` fixture: a repo
-  whose `.eizo/graph.db` exists but has no symbols — distinct from a bare
-  `tmp_path`, which query commands now reject as *not indexed*.
 - Scalability regression is locked by `TestIndexingScales`, which counts SQLite
   VM steps via `set_progress_handler` rather than wall clock (deterministic).
+- `watch`'s infinite loop is tested by mocking `eizo.cli.time.sleep` with a
+  `side_effect` that mutates files then raises `KeyboardInterrupt` — drives a
+  bounded number of iterations through `CliRunner` without hanging the suite.
 - Coverage gate: 70%.
 - `cli.py`: 99% coverage; `__main__.py`: 100% coverage.
 - `asyncio_mode = auto` in pytest config.
-- 455 tests total. Test files include: `test_cli.py`, `test_main.py`, `test_indexer.py`,
+- 531 tests total. Test files include: `test_cli.py`, `test_main.py`, `test_indexer.py`,
   `test_indexer_extended.py`, `test_incremental.py`, `test_analysis.py`, `test_export.py`,
   `test_export_html.py`, `test_queries_extended.py`, `test_store_extended.py`,
   `test_parser_python_extended.py`, `test_parser_typescript_extended.py`,
-  `test_mcp_server.py`, `test_coverage_gaps.py`.
+  `test_mcp_server.py`, `test_coverage_gaps.py`, `test_queries_cycles.py`,
+  `test_queries_metrics.py`, `test_queries_why.py`, `test_queries_diff.py`,
+  `test_cli_cycles.py`, `test_cli_metrics.py`, `test_cli_why.py`, `test_cli_diff.py`.
 
 ## Error handling
 
@@ -196,6 +230,25 @@ src/eizo/
   schemas in a way that breaks with `pydantic>=2.11`, which `mcp` itself now
   requires. A venv with `mcp>=1.28` and `pydantic<2.11` fails at
   `create_server()` with `PydanticUserError`.
+- `pathspec>=1.1` — gitignore-syntax matcher for `.gitignore`/`.eizoignore`
+  support in the indexer. Uses the `"gitignore"` pattern factory name in
+  `PathSpec.from_lines()`, not the older `"gitwildmatch"` alias (deprecated,
+  emits a warning).
+
+## Node identity
+
+- `Node.id` = SHA-256(`{file_path}:{name}:{line}:{column}`)[:16] — column was
+  added because line alone collides in minified/generated files (thousands of
+  symbols on one physical line). `GraphStore.upsert_nodes()` still collapses
+  same-id duplicates within a batch (last write wins), since column disambiguates
+  *most* but not all cases (e.g. two homonymous methods that happen to start at
+  the exact same offset across different generated blocks).
+- Call-site position (`kind='call'` nodes) is taken from the method-name token
+  (`attribute`/`member_expression`'s `property` field), **not** from the
+  enclosing `attribute`/`member_expression` node itself — that node's own
+  `start_point` is the position of the *object*, not the method name. Get this
+  wrong and `x.f().f()` (same method name called twice in one chain) collides:
+  both calls' enclosing nodes start at `x`.
 
 ## Conventions
 
