@@ -23,7 +23,7 @@ _DEFAULT_ENTRYPOINTS: frozenset[str] = frozenset({
 })
 
 
-def _real_referrers(store: GraphStore, node: Node) -> list[Node]:
+def real_referrers(store: GraphStore, node: Node) -> list[Node]:
     """Encontra quem realmente referencia esta definição (calls/imports/inherits).
 
     Delega a `store.get_real_references`, que resolve o padrão
@@ -60,7 +60,7 @@ def find_dead_code(
 
     Um símbolo é considerado "dead" se:
     - É uma definição (function, method, class)
-    - Ninguém realmente o chama, importa ou herda dele (ver `_real_referrers`)
+    - Ninguém realmente o chama, importa ou herda dele (ver `real_referrers`)
     - Seu nome não está na lista de entrypoints conhecidos
 
     Args:
@@ -79,7 +79,7 @@ def find_dead_code(
     for node in _definition_nodes(store):
         if node.name in entrypoints:
             continue
-        if _real_referrers(store, node):
+        if real_referrers(store, node):
             continue
         dead.append(node)
         if len(dead) >= limit:
@@ -96,7 +96,7 @@ def find_hotspots(
     """Encontra símbolos mais referenciados (hotspots).
 
     Conta referências reais (calls/imports/inherits, resolvendo call sites —
-    ver `_real_referrers`) para cada nó de definição. Símbolos com muitas
+    ver `real_referrers`) para cada nó de definição. Símbolos com muitas
     referências são pontos críticos — mudanças neles têm alto impacto.
 
     Args:
@@ -110,7 +110,7 @@ def find_hotspots(
     """
     results: list[dict[str, Any]] = []
     for node in _definition_nodes(store):
-        ref_count = len(_real_referrers(store, node))
+        ref_count = len(real_referrers(store, node))
         if ref_count >= min_references:
             results.append({"node": node, "reference_count": ref_count})
 

@@ -2,23 +2,30 @@
 
 Comandos:
   eizo init     Indexa o repositório atual
+  eizo watch    Reindexa continuamente ao detectar mudanças
+  eizo diff     Compara símbolos do working tree contra um ref git
   eizo search   Busca símbolos no grafo
   eizo trace    Traça call graph de um símbolo
+  eizo why      Explica por que dois símbolos estão acoplados
   eizo impact   Analisa impacto de mudança
   eizo arch     Mostra visão arquitetural
   eizo mcp      Inicia servidor MCP
   eizo status   Estatísticas do grafo
   eizo dead     Detecta código morto (sem callers)
+  eizo cycles   Detecta ciclos de import entre arquivos
   eizo hotspots Mostra símbolos mais referenciados
+  eizo metrics  Mostra fan-in, fan-out e LOC de um símbolo
   eizo export   Exporta grafo em DOT/Mermaid/JSON/HTML (3D)
 """
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import logging
 import os
 import sqlite3
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
@@ -34,6 +41,8 @@ from eizo.graph.schema import get_db_path
 from eizo.graph.store import GraphStore
 from eizo.indexer import index_repository
 from eizo.queries.analysis import find_dead_code, find_hotspots
+from eizo.queries.cycles import find_import_cycles
+from eizo.queries.diff import diff_against_ref
 from eizo.queries.export import (
     export_architecture_mermaid,
     export_dot,
@@ -42,8 +51,10 @@ from eizo.queries.export import (
     export_mermaid,
 )
 from eizo.queries.impact import analyze_impact
+from eizo.queries.metrics import compute_symbol_metrics
 from eizo.queries.search import search_symbols
 from eizo.queries.trace import trace_call_path
+from eizo.queries.why import find_dependency_path
 
 console = Console()
 _force_color: bool | None = None
@@ -474,6 +485,78 @@ def init(
         })
 
 
+def _watch_tick(store: GraphStore, effective_path: Path) -> str | None:
+    """Roda uma passada de indexação incremental.
+
+    Retorna uma linha de resumo se algo mudou (arquivo criado/removido, ou
+    contagem de nós/arestas alterada), ou None se nada mudou. Uma edição que
+    não altera a contagem de nós (ex: só o corpo de uma função, mantendo o
+    mesmo número de símbolos) não gera linha — é o preço de não recalcular
+    hash por arquivo a cada tick só para o resumo do watch.
+    """
+    files_before = set(store.get_indexed_files())
+    stats_before = store.get_stats()
+    index_repository(effective_path, store, quiet=True)
+    files_after = set(store.get_indexed_files())
+    stats_after = store.get_stats()
+
+    added = files_after - files_before
+    removed = files_before - files_after
+    node_delta = stats_after.total_nodes - stats_before.total_nodes
+    edge_delta = stats_after.total_edges - stats_before.total_edges
+    if not added and not removed and node_delta == 0 and edge_delta == 0:
+        return None
+
+    parts = []
+    if added:
+        parts.append(f"+{len(added)} arquivo(s)")
+    if removed:
+        parts.append(f"-{len(removed)} arquivo(s)")
+    parts.append(f"{stats_after.total_nodes} nós ({node_delta:+d})")
+    parts.append(f"{stats_after.total_edges} arestas ({edge_delta:+d})")
+    return " · ".join(parts)
+
+
+@main.command(
+    short_help="Reindexa continuamente ao detectar mudanças",
+    epilog=(
+        "\b\n"
+        "Exemplos:\n"
+        "  eizo watch\n"
+        "  eizo watch --interval 1\n"
+        "  eizo watch --repo /caminho/do/repo"
+    ),
+)
+@click.argument("path", default=".", type=click.Path(exists=True, file_okay=False))
+@click.option(
+    "--interval", default=2.0, type=click.FloatRange(min=0.2),
+    help="Intervalo entre varreduras, em segundos (padrão: 2.0)",
+)
+@_repo_option()
+def watch(path: str, repo_path: str, interval: float) -> None:
+    """Reindexa o repositório a cada intervalo, enquanto houver mudanças.
+
+    Reaproveita a indexação incremental de `init` (só reparseia arquivos com
+    hash alterado, e remove do grafo os que sumiram do disco) — não reage a
+    eventos do sistema de arquivos, faz polling. Como a indexação incremental
+    já é rápida (~0,008s/arquivo em repositórios médios), o custo de
+    reescanear a cada tick é baixo.
+    """
+    effective_path = Path(repo_path if repo_path != "." else path).resolve()
+    store = GraphStore(effective_path)
+
+    console.print(f"[bold]Observando {effective_path}[/bold] (intervalo: {interval}s). Ctrl+C para parar.")
+    try:
+        while True:
+            summary = _watch_tick(store, effective_path)
+            if summary:
+                timestamp = dt.datetime.now().strftime("%H:%M:%S")
+                console.print(f"[dim]{timestamp}[/dim] [green]✓[/green] {summary}")
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Interrompido.[/yellow]")
+
+
 @main.command(
     short_help="Busca símbolos no grafo",
     epilog=(
@@ -550,6 +633,56 @@ def search(
 
     console.print(table)
     console.print(f"[dim]{len(results)} resultado(s)[/dim]")
+
+
+@main.command(
+    short_help="Explica por que dois símbolos estão acoplados",
+    epilog="\b\nExemplos:\n  eizo why main helper\n  eizo why UserService Database --max-depth 15",
+)
+@click.argument("symbol_a")
+@click.argument("symbol_b")
+@click.option(
+    "--max-depth", default=10, type=click.IntRange(min=1, max=50),
+    help="Máximo de saltos na busca (padrão: 10)",
+)
+@_repo_option()
+@click.pass_context
+def why(ctx: click.Context, symbol_a: str, symbol_b: str, max_depth: int, repo_path: str) -> None:
+    """Acha o caminho de dependência mais curto entre dois símbolos.
+
+    É o inverso de `trace`: em vez de listar tudo que um símbolo chama,
+    mostra especificamente COMO A chega em B (ou B chega em A, se só existir
+    na direção contrária), seguindo calls/inherits. Útil para entender por
+    que dois módulos aparentemente não-relacionados estão acoplados.
+    """
+    cfg = _merge_config(ctx, command_values={"repo_path": repo_path})
+    repo_path = cfg.get("repo_path", repo_path)
+    store = _open_store(repo_path)
+    result = find_dependency_path(store, symbol_a, symbol_b, max_depth=max_depth)
+
+    if ctx.obj.get("format") == "json":
+        _emit_json({
+            "found": result["found"],
+            "direction": result["direction"],
+            "path": [_node_to_dict(n) for n in result["path"]],
+            "reason": result["reason"],
+        })
+        return
+
+    if not result["found"]:
+        console.print(f"[yellow]{result['reason']}[/yellow]")
+        return
+
+    path_names = [n.name for n in result["path"]]
+    if result["direction"] == "forward":
+        console.print(f"[green]'{symbol_a}' depende de '{symbol_b}':[/green]")
+    else:
+        console.print(
+            f"[green]'{symbol_b}' depende de '{symbol_a}'[/green] "
+            f"[dim](direção invertida — '{symbol_a}' não alcança '{symbol_b}')[/dim]"
+        )
+    console.print("  " + " → ".join(path_names))
+    console.print(f"\n[dim]{len(path_names) - 1} salto(s)[/dim]")
 
 
 @main.command(
@@ -932,6 +1065,43 @@ def dead(ctx: click.Context, repo_path: str, entrypoints: tuple[str, ...], limit
 
 
 @main.command(
+    short_help="Detecta ciclos de import entre arquivos",
+    epilog="\b\nExemplos:\n  eizo cycles",
+)
+@_repo_option()
+@click.pass_context
+def cycles(ctx: click.Context, repo_path: str) -> None:
+    """Detecta dependência circular entre arquivos (ciclos de import).
+
+    Resolve cada import para um arquivo candidato pela mesma heurística de
+    module_hint usada em `trace`/`impact` — não é resolução real de
+    import/módulo, é aproximação best-effort.
+    """
+    cfg = _merge_config(ctx, command_values={"repo_path": repo_path})
+    repo_path = cfg.get("repo_path", repo_path)
+    store = _open_store(repo_path)
+    results = find_import_cycles(store)
+
+    if ctx.obj.get("format") == "json":
+        _emit_json(results)
+        return
+
+    if not results:
+        console.print("[green]✓ Nenhum ciclo de import encontrado![/green]")
+        return
+
+    console.print(f"[bold]Ciclos de import detectados[/bold] ({len(results)})\n")
+    for cycle in results:
+        files = cycle["files"]
+        path = cycle["path"]
+        console.print(f"[red]● {len(files)} arquivo(s) em ciclo:[/red]")
+        console.print("  " + " → ".join(Path(p).name for p in path))
+        for f in files:
+            console.print(f"  [dim]{f}[/dim]")
+        console.print()
+
+
+@main.command(
     short_help="Mostra símbolos mais referenciados",
     epilog="\b\nExemplos:\n  eizo hotspots\n  eizo hotspots --min-refs 1 --limit 10",
 )
@@ -995,6 +1165,101 @@ def hotspots(
         "\n[dim]Símbolos com muitas referências são pontos críticos — "
         "mudanças neles têm alto impacto.[/dim]"
     )
+
+
+@main.command(
+    short_help="Mostra fan-in, fan-out e LOC de um símbolo",
+    epilog="\b\nExemplos:\n  eizo metrics minha_funcao",
+)
+@click.argument("symbol_name")
+@_repo_option()
+@click.pass_context
+def metrics(ctx: click.Context, symbol_name: str, repo_path: str) -> None:
+    """Mostra fan-in, fan-out e LOC de um símbolo (function/method/class).
+
+    fan-in: quantos símbolos distintos referenciam este (chamam, importam ou
+    herdam dele). fan-out: quantos símbolos distintos este referencia
+    (chama ou herda de). LOC: linhas entre o início e o fim da definição.
+    """
+    cfg = _merge_config(ctx, command_values={"repo_path": repo_path})
+    repo_path = cfg.get("repo_path", repo_path)
+    store = _open_store(repo_path)
+    results = compute_symbol_metrics(store, symbol_name)
+
+    if ctx.obj.get("format") == "json":
+        _emit_json([
+            {"node": _node_to_dict(r["node"]), "fan_in": r["fan_in"], "fan_out": r["fan_out"], "loc": r["loc"]}
+            for r in results
+        ])
+        return
+
+    if not results:
+        console.print(f"[yellow]Nenhuma definição encontrada para '{symbol_name}'.[/yellow]")
+        return
+
+    table = Table(title=f"Métricas de '{symbol_name}'")
+    table.add_column("Tipo", style="green")
+    table.add_column("Arquivo", style="white")
+    table.add_column("Linha", style="dim")
+    table.add_column("Fan-in", style="cyan", justify="right")
+    table.add_column("Fan-out", style="cyan", justify="right")
+    table.add_column("LOC", style="yellow", justify="right")
+
+    for r in results:
+        node = r["node"]
+        table.add_row(
+            node.kind,
+            node.file_path,
+            str(node.line_start or ""),
+            str(r["fan_in"]),
+            str(r["fan_out"]),
+            str(r["loc"]) if r["loc"] is not None else "",
+        )
+
+    console.print(table)
+
+
+@main.command(
+    short_help="Compara símbolos do working tree contra um ref git",
+    epilog="\b\nExemplos:\n  eizo diff main\n  eizo diff origin/main --repo /caminho/do/repo",
+)
+@click.argument("ref")
+@_repo_option()
+@click.pass_context
+def diff(ctx: click.Context, ref: str, repo_path: str) -> None:
+    """Mostra quais símbolos foram adicionados/removidos em relação a um ref git.
+
+    Não precisa de `eizo init` — reparseia direto do disco e via `git show`,
+    sem tocar no grafo indexado. Cobre "o que meu branch mudou em relação a
+    main": para cada arquivo alterado, mostra definições (function/method/
+    class) que apareceram ou sumiram. Mudanças que não afetam a superfície
+    de símbolos (ex: só o corpo de uma função) não aparecem.
+    """
+    cfg = _merge_config(ctx, command_values={"repo_path": repo_path})
+    repo_path = cfg.get("repo_path", repo_path)
+    try:
+        result = diff_against_ref(repo_path, ref)
+    except RuntimeError as e:
+        raise click.ClickException(str(e)) from e
+
+    if ctx.obj.get("format") == "json":
+        _emit_json(result)
+        return
+
+    files = result["files"]
+    if not files:
+        console.print(f"[green]✓ Nenhuma mudança de símbolos em relação a '{ref}'.[/green]")
+        return
+
+    console.print(f"[bold]Diff de símbolos vs '{ref}'[/bold] ({len(files)} arquivo(s))\n")
+    for entry in files:
+        status_style = {"added": "green", "removed": "red", "modified": "yellow"}[entry["status"]]
+        console.print(f"[{status_style}]{entry['status']}[/{status_style}]  {entry['file']}")
+        for name, kind in entry["added"]:
+            console.print(f"  [green]+ {kind} {name}[/green]")
+        for name, kind in entry["removed"]:
+            console.print(f"  [red]- {kind} {name}[/red]")
+        console.print()
 
 
 @main.command(
