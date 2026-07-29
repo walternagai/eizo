@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from eizo.graph.models import DEFINITION_KINDS, Edge, GraphStats, Node
-from eizo.graph.schema import ensure_db_dir, open_db
+from eizo.graph.schema import ensure_db_dir, fts_rowid, open_db
 
 
 def _extract_import_module_and_symbol(import_name: str) -> tuple[str, str | None]:
@@ -110,7 +110,15 @@ class GraphStore:
         self.conn.commit()
 
     def upsert_nodes(self, nodes: list[Node]) -> None:
-        """Insere ou atualiza múltiplos nós em lote."""
+        """Insere ou atualiza múltiplos nós em lote.
+
+        Ids repetidos dentro do mesmo lote são colapsados na última ocorrência,
+        que é a semântica que `INSERT OR REPLACE` já aplicava à tabela `nodes`.
+        Isso importa em arquivos minificados, onde tudo divide a mesma linha e o
+        id (`arquivo:nome:linha`) colide aos milhares: sem colapsar, o índice FTS
+        acumulava uma entrada órfã por ocorrência repetida.
+        """
+        nodes = list({n.id: n for n in nodes}.values())
         data = [
             (
                 n.id,
@@ -132,17 +140,19 @@ class GraphStore:
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             data,
         )
-        # Sincroniza índice FTS5: remove entradas antigas e reinsere.
+        # Sincroniza índice FTS5: remove entradas antigas e reinsere, sempre
+        # ancorando no rowid determinístico (ver schema.fts_rowid).
         if nodes:
             self.conn.executemany(
-                "DELETE FROM nodes_fts WHERE node_id = ?", [(n.id,) for n in nodes]
+                "DELETE FROM nodes_fts WHERE rowid = ?", [(fts_rowid(n.id),) for n in nodes]
             )
             fts_data = [
-                (n.id, n.name or "", n.docstring or "", n.code_snippet or "")
+                (fts_rowid(n.id), n.id, n.name or "", n.docstring or "", n.code_snippet or "")
                 for n in nodes
             ]
             self.conn.executemany(
-                "INSERT INTO nodes_fts (node_id, name, docstring, code_snippet) VALUES (?, ?, ?, ?)",
+                "INSERT INTO nodes_fts (rowid, node_id, name, docstring, code_snippet) "
+                "VALUES (?, ?, ?, ?, ?)",
                 fts_data,
             )
         self.conn.commit()
@@ -240,7 +250,7 @@ class GraphStore:
         # Limpa índice FTS5
         if node_ids:
             self.conn.executemany(
-                "DELETE FROM nodes_fts WHERE node_id = ?", [(nid,) for nid in node_ids]
+                "DELETE FROM nodes_fts WHERE rowid = ?", [(fts_rowid(nid),) for nid in node_ids]
             )
 
         self.conn.commit()
@@ -311,6 +321,11 @@ class GraphStore:
             (file_path, content_hash, mtime, indexed_at),
         )
         self.conn.commit()
+
+    def get_indexed_files(self) -> list[str]:
+        """Retorna os caminhos de todos os arquivos presentes no índice incremental."""
+        rows = self.conn.execute("SELECT file_path FROM file_index").fetchall()
+        return [r["file_path"] for r in rows]
 
     def delete_file_index(self, file_path: str) -> None:
         """Remove entry de indexação incremental para um arquivo."""

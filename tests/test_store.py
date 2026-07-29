@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 from eizo.graph.models import Edge, Node
-from eizo.graph.store import _extract_import_module_and_symbol, _module_hint_matches_file
+from eizo.graph.schema import fts_rowid
+from eizo.graph.store import (
+    GraphStore,
+    _extract_import_module_and_symbol,
+    _module_hint_matches_file,
+)
 
 
 class TestExtractImportModuleAndSymbol:
@@ -398,3 +403,64 @@ class TestGraphStore:
         stats = store.get_stats()
         assert stats.total_nodes == 0
         assert stats.total_edges == 0
+
+
+class TestFtsRowidAnchoring:
+    """`nodes_fts` ancorado em rowid determinístico (schema v3).
+
+    Em v2 as entradas eram removidas por `WHERE node_id = ?` — coluna UNINDEXED,
+    logo varredura completa por nó — o que tornava a reindexação quadrática.
+    """
+
+    def test_rowid_is_deterministic(self) -> None:
+        assert fts_rowid("abc") == fts_rowid("abc")
+        assert fts_rowid("abc") != fts_rowid("abd")
+
+    def test_rowid_fits_signed_64_bits(self) -> None:
+        """Fora do intervalo do rowid, o SQLite rejeitaria o INSERT."""
+        for nid in ("a", "deadbeef" * 8, "nó-com-acento", "", "0" * 16):
+            assert -(2**63) <= fts_rowid(nid) <= 2**63 - 1
+
+    def test_rowid_accepts_non_hex_ids(self) -> None:
+        """`GraphStore` aceita `Node.id` arbitrário, não só hash hexadecimal."""
+        assert isinstance(fts_rowid("defn"), int)
+
+    def test_reindex_does_not_grow_fts_index(self, store: GraphStore) -> None:
+        """Reindexar o mesmo arquivo não acumula entradas órfãs no FTS."""
+        nodes = [
+            Node(id=f"n{i}", name=f"sym_{i}", kind="function",
+                 file_path="/a.py", language="python", line_start=i, line_end=i)
+            for i in range(10)
+        ]
+        store.upsert_nodes(nodes)
+        first = store.conn.execute("SELECT count(*) FROM nodes_fts").fetchone()[0]
+        for _ in range(5):
+            store.upsert_nodes(nodes)
+        assert store.conn.execute("SELECT count(*) FROM nodes_fts").fetchone()[0] == first
+
+    def test_duplicate_ids_in_batch_collapse(self, store: GraphStore) -> None:
+        """Ids repetidos no lote colapsam — caso real de arquivo minificado.
+
+        Num `.min.js` tudo divide a mesma linha, então `arquivo:nome:linha`
+        colide aos milhares dentro de um único arquivo.
+        """
+        dupes = [
+            Node(id="mesmo", name=f"v{i}", kind="function",
+                 file_path="/min.js", language="typescript", line_start=5, line_end=5)
+            for i in range(50)
+        ]
+        store.upsert_nodes(dupes)  # não deve levantar constraint failed
+        assert store.conn.execute("SELECT count(*) FROM nodes_fts").fetchone()[0] == 1
+        assert store.conn.execute("SELECT count(*) FROM nodes WHERE id='mesmo'").fetchone()[0] == 1
+        # a última ocorrência vence, como em INSERT OR REPLACE
+        assert store.get_node("mesmo").name == "v49"
+
+    def test_delete_by_file_clears_fts(self, store: GraphStore) -> None:
+        """Remover os nós de um arquivo limpa as entradas FTS correspondentes."""
+        store.upsert_nodes([
+            Node(id="x1", name="alvo_unico", kind="function",
+                 file_path="/b.py", language="python", line_start=1, line_end=2)
+        ])
+        assert store.search_nodes_fts("alvo_unico")
+        store.delete_nodes_by_file("/b.py")
+        assert store.conn.execute("SELECT count(*) FROM nodes_fts").fetchone()[0] == 0

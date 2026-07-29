@@ -132,7 +132,7 @@ class TestCoverageGaps:
 
     # ─── cli.py: linhas 219-222 (mcp command) ───
 
-    def test_cli_mcp_command(self, tmp_path: Path) -> None:
+    def test_cli_mcp_command(self, indexed_empty_repo: Path) -> None:
         """Comando mcp deve iniciar servidor (simulado)."""
         from click.testing import CliRunner
 
@@ -140,7 +140,7 @@ class TestCoverageGaps:
 
         with patch("eizo.mcp.server.serve_mcp") as mock_serve:
             runner = CliRunner()
-            result = runner.invoke(main, ["mcp", "--port", "9999", "--repo", str(tmp_path)])
+            result = runner.invoke(main, ["mcp", "--port", "9999", "--repo", str(indexed_empty_repo)])
             assert result.exit_code == 0
             mock_serve.assert_called_once()
 
@@ -453,7 +453,7 @@ function test() {
         result = runner.invoke(main, ["status"])
         assert result.exit_code == 0
 
-    def test_cli_config_no_color(self, tmp_path: Path) -> None:
+    def test_cli_config_no_color(self, indexed_empty_repo: Path) -> None:
         """config.json com no_color: true desativa cores."""
         from click.testing import CliRunner
 
@@ -464,9 +464,9 @@ function test() {
         console._color_system = None
         console._force_terminal = None
 
-        repo = Path(tmp_path)
+        repo = Path(indexed_empty_repo)
         eizo_dir = repo / ".eizo"
-        eizo_dir.mkdir()
+        eizo_dir.mkdir(exist_ok=True)  # a fixture indexed_empty_repo já criou o diretório
         (eizo_dir / "config.json").write_text('{"no_color": true}')
 
         runner = CliRunner()
@@ -498,7 +498,7 @@ function test() {
         result = _install_completion("powershell")
         assert "não suportado" in result.lower()
 
-    def test_cli_no_color_explicit(self, tmp_path: Path) -> None:
+    def test_cli_no_color_explicit(self, indexed_empty_repo: Path) -> None:
         """--no-color desativa sistema de cor."""
         from click.testing import CliRunner
 
@@ -506,7 +506,7 @@ function test() {
         from eizo.cli import console, main
 
         runner = CliRunner()
-        result = runner.invoke(main, ["--no-color", "status", "--repo", str(tmp_path)])
+        result = runner.invoke(main, ["--no-color", "status", "--repo", str(indexed_empty_repo)])
         assert result.exit_code == 0
         assert console._color_system is None
         eizo.cli._force_color = False

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -84,6 +85,62 @@ CREATE VIRTUAL TABLE IF NOT EXISTS nodes_fts USING fts5(
 CREATE INDEX IF NOT EXISTS idx_file_index_path ON file_index(file_path);
 """
 
+# Migração v2 → v3: reconstrói `nodes_fts` ancorando cada entrada num rowid
+# determinístico derivado de `nodes.id`. Em v2 as entradas eram removidas por
+# `WHERE node_id = ?`, coluna UNINDEXED — cada remoção varria o índice inteiro,
+# tornando a reindexação quadrática. Como o índice é inteiramente derivável de
+# `nodes`, descartamos e repovoamos em vez de tentar reescrever rowids.
+MIGRATION_V2_TO_V3 = """
+DROP TABLE IF EXISTS nodes_fts;
+
+CREATE VIRTUAL TABLE nodes_fts USING fts5(
+    node_id UNINDEXED,
+    name,
+    docstring,
+    code_snippet
+);
+"""
+
+
+def fts_rowid(node_id: str) -> int:
+    """Deriva o rowid da entrada FTS5 a partir do id do nó.
+
+    `nodes_fts.node_id` é declarado UNINDEXED, então `DELETE ... WHERE node_id = ?`
+    varre a tabela inteira — o custo vira O(nós_no_índice) por nó removido, o que
+    torna a reindexação quadrática no tamanho do repositório. Ancorando cada
+    entrada num rowid determinístico, a remoção passa a ser lookup por chave.
+
+    Os ids gerados pelos parsers são SHA-256 truncado, mas `GraphStore` aceita
+    `Node.id` arbitrário, então derivamos por hash em vez de interpretar o id
+    como hexadecimal. 64 bits deslocados para o intervalo do inteiro com sinal
+    usado pelo rowid; a unicidade é a mesma já assumida para o próprio `node_id`.
+    """
+    digest = hashlib.blake2b(node_id.encode("utf-8"), digest_size=8).digest()
+    return int.from_bytes(digest, "big") - 2**63
+
+
+def _repopulate_fts(conn: sqlite3.Connection) -> None:
+    """Repovoa `nodes_fts` a partir de `nodes`, com rowids determinísticos."""
+    rows = conn.execute(
+        "SELECT id, name, docstring, code_snippet FROM nodes"
+    ).fetchall()
+    if not rows:
+        return
+    conn.executemany(
+        "INSERT INTO nodes_fts (rowid, node_id, name, docstring, code_snippet) "
+        "VALUES (?, ?, ?, ?, ?)",
+        [
+            (
+                fts_rowid(r["id"]),
+                r["id"],
+                r["name"] or "",
+                r["docstring"] or "",
+                r["code_snippet"] or "",
+            )
+            for r in rows
+        ],
+    )
+
 
 def get_db_path(path: Path | None = None) -> Path:
     """Retorna o caminho do banco SQLite.
@@ -129,6 +186,12 @@ def migrate_db(conn: sqlite3.Connection) -> None:
 
     if current < 2:
         conn.executescript(MIGRATION_V1_TO_V2)
+
+    if current < 3:
+        conn.executescript(MIGRATION_V2_TO_V3)
+        _repopulate_fts(conn)
+
+    if current < SCHEMA_VERSION:
         conn.execute(
             "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
             ("schema_version", str(SCHEMA_VERSION)),

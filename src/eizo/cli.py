@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
@@ -29,6 +30,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.tree import Tree
 
+from eizo.graph.schema import get_db_path
 from eizo.graph.store import GraphStore
 from eizo.indexer import index_repository
 from eizo.queries.analysis import find_dead_code, find_hotspots
@@ -46,6 +48,37 @@ from eizo.queries.trace import trace_call_path
 console = Console()
 _force_color: bool | None = None
 logger = logging.getLogger("eizo")
+
+
+def _open_store(repo_path: str | Path) -> GraphStore:
+    """Abre o GraphStore de um repositório **já indexado**.
+
+    Diferente de instanciar `GraphStore` direto, distingue os dois estados que
+    o construtor confunde:
+
+    - repositório nunca indexado (sem `.eizo/graph.db`) — antes criava um grafo
+      vazio como efeito colateral e reportava "nenhum resultado", indistinguível
+      de uma busca legitimamente sem correspondências;
+    - banco existente porém corrompido — antes vazava um traceback de
+      `sqlite3.DatabaseError` até o terminal.
+
+    Um repositório indexado mas sem nós continua sendo caso normal: retorna o
+    store e cada comando decide como reportar ("Grafo vazio").
+    """
+    repo = Path(repo_path).resolve()
+    db_path = get_db_path(repo)
+    if not db_path.exists():
+        raise click.ClickException(f"Repositório não indexado: {repo}\nExecute 'eizo init' primeiro.")
+
+    store = GraphStore(repo)
+    try:
+        store.conn.execute("SELECT 1")
+    except sqlite3.DatabaseError as e:
+        raise click.ClickException(
+            f"Banco de grafo inválido ou corrompido: {db_path} ({e})\n"
+            "Execute 'eizo init --rebuild' para reconstruí-lo."
+        ) from e
+    return store
 
 
 def _setup_logging(verbosity: int, quiet: bool) -> None:
@@ -484,7 +517,7 @@ def search(
         command_values={"limit": limit, "full_text": full_text, "repo_path": repo_path},
     )
     repo_path = cfg.get("repo_path", repo_path)
-    store = GraphStore(Path(repo_path).resolve())
+    store = _open_store(repo_path)
     results = search_symbols(
         store, query,
         kind=kind, language=language,
@@ -541,7 +574,7 @@ def trace(ctx: click.Context, symbol: str, direction: str, depth: int, repo_path
     )
     repo_path = cfg.get("repo_path", repo_path)
     repo = Path(repo_path).resolve()
-    store = GraphStore(repo)
+    store = _open_store(repo)
     result = trace_call_path(store, symbol, direction=direction, max_depth=cfg["depth"])
 
     if ctx.obj.get("format") == "json":
@@ -666,7 +699,7 @@ def impact(ctx: click.Context, symbol: str, depth: int, repo_path: str) -> None:
         command_values={"depth": depth, "repo_path": repo_path},
     )
     repo_path = cfg.get("repo_path", repo_path)
-    store = GraphStore(Path(repo_path).resolve())
+    store = _open_store(repo_path)
     result = analyze_impact(store, symbol, max_depth=cfg["depth"])
 
     if ctx.obj.get("format") == "json":
@@ -718,7 +751,7 @@ def arch(ctx: click.Context, repo_path: str) -> None:
 
 def _render_arch(ctx: click.Context, repo_path: str, output: str | None = None) -> None:
     """Renderiza visão arquitetural (usada por `arch` e `architecture`)."""
-    store = GraphStore(Path(repo_path).resolve())
+    store = _open_store(repo_path)
     stats = store.get_stats()
 
     if ctx.obj.get("format") == "json":
@@ -792,7 +825,7 @@ def mcp(ctx: click.Context, port: int, transport: str, repo_path: str) -> None:
 
     cfg = _merge_config(ctx, command_values={"repo_path": repo_path})
     repo_path = cfg.get("repo_path", repo_path)
-    store = GraphStore(Path(repo_path).resolve())
+    store = _open_store(repo_path)
     # transport é validado por click.Choice(["sse", "stdio"]) — cast seguro
     serve_mcp(store, port, transport=transport)  # type: ignore[arg-type]
 
@@ -807,7 +840,7 @@ def status(ctx: click.Context, repo_path: str) -> None:
     """Mostra estatísticas do grafo de conhecimento."""
     cfg = _merge_config(ctx, command_values={"repo_path": repo_path})
     repo_path = cfg.get("repo_path", repo_path)
-    store = GraphStore(Path(repo_path).resolve())
+    store = _open_store(repo_path)
     stats = store.get_stats()
 
     if ctx.obj.get("format") == "json":
@@ -863,7 +896,7 @@ def dead(ctx: click.Context, repo_path: str, entrypoints: tuple[str, ...], limit
         command_values={"limit": limit, "repo_path": repo_path},
     )
     repo_path = cfg.get("repo_path", repo_path)
-    store = GraphStore(Path(repo_path).resolve())
+    store = _open_store(repo_path)
     eps = frozenset(entrypoints) if entrypoints else None
     results = find_dead_code(store, entrypoints=eps, limit=cfg["limit"])
 
@@ -922,7 +955,7 @@ def hotspots(
         command_values={"limit": limit, "min_refs": min_refs, "repo_path": repo_path},
     )
     repo_path = cfg.get("repo_path", repo_path)
-    store = GraphStore(Path(repo_path).resolve())
+    store = _open_store(repo_path)
     results = find_hotspots(store, limit=cfg["limit"], min_references=cfg["min_refs"])
 
     if ctx.obj.get("format") == "json":
@@ -1007,7 +1040,7 @@ def export(
     """Exporta o grafo em formato DOT, Mermaid, JSON ou HTML (tridimensional)."""
     cfg = _merge_config(ctx, command_values={"repo_path": repo_path})
     repo_path = cfg.get("repo_path", repo_path)
-    store = GraphStore(Path(repo_path).resolve())
+    store = _open_store(repo_path)
     eps = frozenset(edge_kinds) if edge_kinds else None
 
     if format == "dot":

@@ -21,6 +21,9 @@ coverage/
 # Eizō database
 .eizo/
 
+# Kata — estado local do ciclo de qualidade
+.kata/
+
 # Environment
 .env
 .venv/

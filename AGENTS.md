@@ -83,6 +83,22 @@ make coverage    # pytest --cov=src/eizo --cov-report=term-missing
 - Default level is WARNING.
 - Format: `LEVEL: message`.
 
+## Incremental indexing
+
+- `eizo init` syncs the graph with disk on every run — created, modified **and
+  deleted** files. No flag needed.
+- Deletion detection compares `file_index` against *every* file the walk found,
+  not against the reindex list (which excludes unchanged files). Getting this
+  wrong would purge unchanged files.
+- The purge is scoped to the root being walked: entries outside it are left
+  alone, since the same store may have indexed another tree.
+- It runs before the "no parseable files" early return — emptying a repo must
+  still empty the graph.
+- `--force` only bypasses the hash cache (reparses everything); it is *not* what
+  removes orphans. `--rebuild` wipes the graph and starts over.
+- A `call` node referencing a symbol whose definition file was deleted stays:
+  the calling file still exists and still contains that reference.
+
 ## Dry-run
 
 - `eizo init --dry-run` lists files that would be indexed without persisting
@@ -130,26 +146,56 @@ src/eizo/
 ## SQLite
 
 - DB stored at `{repo}/.eizo/graph.db`. WAL mode + foreign keys ON.
-- Schema v2: `nodes`, `edges`, `file_index` (incremental), `nodes_fts` (FTS5).
+- Schema v3: `nodes`, `edges`, `file_index` (incremental), `nodes_fts` (FTS5).
 - Node IDs: SHA-256(`{file_path}:{name}:{line}`)[:16].
 - `file_index` tracks content_hash + mtime per file for incremental indexing.
 - `nodes_fts` is a standard FTS5 table (name, docstring, code_snippet) synced
   on every upsert/delete.
-- Schema migration: `migrate_db()` upgrades v1 → v2 (adds file_index + nodes_fts).
+- **FTS rows are anchored to a deterministic rowid** via `schema.fts_rowid()`.
+  `node_id` is UNINDEXED, so deleting by it scans the whole index — that made
+  reindexing quadratic in repo size. Always delete/insert FTS rows *by rowid*.
+- `upsert_nodes()` collapses duplicate ids within a batch (last one wins,
+  matching `INSERT OR REPLACE`). Minified files put every symbol on one line, so
+  `file:name:line` collides by the thousands inside a single file.
+- Schema migration: `migrate_db()` upgrades v1 → v2 (adds file_index +
+  nodes_fts) and v2 → v3 (rebuilds nodes_fts with deterministic rowids).
 
 ## Testing
 
 - `store` fixture: `GraphStore(tmp_path)` — SQLite in temp dir.
 - `sample_python_file` / `sample_ts_file`: string fixtures for parser tests.
 - `sample_python_repo`: creates real dir tree for indexer tests.
+- `store` fixture: `GraphStore(tmp_path)`. `indexed_empty_repo` fixture: a repo
+  whose `.eizo/graph.db` exists but has no symbols — distinct from a bare
+  `tmp_path`, which query commands now reject as *not indexed*.
+- Scalability regression is locked by `TestIndexingScales`, which counts SQLite
+  VM steps via `set_progress_handler` rather than wall clock (deterministic).
 - Coverage gate: 70%.
 - `cli.py`: 99% coverage; `__main__.py`: 100% coverage.
 - `asyncio_mode = auto` in pytest config.
-- 430 tests total. Test files include: `test_cli.py`, `test_main.py`, `test_indexer.py`,
+- 455 tests total. Test files include: `test_cli.py`, `test_main.py`, `test_indexer.py`,
   `test_indexer_extended.py`, `test_incremental.py`, `test_analysis.py`, `test_export.py`,
   `test_export_html.py`, `test_queries_extended.py`, `test_store_extended.py`,
   `test_parser_python_extended.py`, `test_parser_typescript_extended.py`,
   `test_mcp_server.py`, `test_coverage_gaps.py`.
+
+## Error handling
+
+- Query commands open the graph via `cli._open_store()`, never `GraphStore()`
+  directly. Only `init` may create a graph.
+- Repo without `.eizo/graph.db` → `ClickException` ("não indexado", exit 1), and
+  nothing is written to disk. Previously this silently created an empty graph and
+  reported "no results", indistinguishable from a genuine empty match.
+- Corrupted DB → `ClickException` suggesting `eizo init --rebuild`, instead of a
+  raw `sqlite3.DatabaseError` traceback.
+- Indexed but empty graph stays a normal case: "Grafo vazio", exit 0.
+
+## Dependencies
+
+- `mcp>=1.28` is a floor, not cosmetic: earlier versions build tool output
+  schemas in a way that breaks with `pydantic>=2.11`, which `mcp` itself now
+  requires. A venv with `mcp>=1.28` and `pydantic<2.11` fails at
+  `create_server()` with `PydanticUserError`.
 
 ## Conventions
 
