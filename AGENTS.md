@@ -83,6 +83,22 @@ make coverage    # pytest --cov=src/eizo --cov-report=term-missing
 - Default level is WARNING.
 - Format: `LEVEL: message`.
 
+## Incremental indexing
+
+- `eizo init` syncs the graph with disk on every run — created, modified **and
+  deleted** files. No flag needed.
+- Deletion detection compares `file_index` against *every* file the walk found,
+  not against the reindex list (which excludes unchanged files). Getting this
+  wrong would purge unchanged files.
+- The purge is scoped to the root being walked: entries outside it are left
+  alone, since the same store may have indexed another tree.
+- It runs before the "no parseable files" early return — emptying a repo must
+  still empty the graph.
+- `--force` only bypasses the hash cache (reparses everything); it is *not* what
+  removes orphans. `--rebuild` wipes the graph and starts over.
+- A `call` node referencing a symbol whose definition file was deleted stays:
+  the calling file still exists and still contains that reference.
+
 ## Dry-run
 
 - `eizo init --dry-run` lists files that would be indexed without persisting
@@ -157,7 +173,7 @@ src/eizo/
 - Coverage gate: 70%.
 - `cli.py`: 99% coverage; `__main__.py`: 100% coverage.
 - `asyncio_mode = auto` in pytest config.
-- 451 tests total. Test files include: `test_cli.py`, `test_main.py`, `test_indexer.py`,
+- 455 tests total. Test files include: `test_cli.py`, `test_main.py`, `test_indexer.py`,
   `test_indexer_extended.py`, `test_incremental.py`, `test_analysis.py`, `test_export.py`,
   `test_export_html.py`, `test_queries_extended.py`, `test_store_extended.py`,
   `test_parser_python_extended.py`, `test_parser_typescript_extended.py`,

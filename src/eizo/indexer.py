@@ -82,8 +82,16 @@ def index_repository(
 ) -> list[Path] | GraphStore:
     """Indexa um repositório inteiro no grafo de conhecimento.
 
-    Usa indexação incremental: arquivos cujo conteúdo (hash) não mudou desde a
-    última indexação são pulados. Use `force=True` para reindexar tudo.
+    Sincroniza o grafo com o disco, cobrindo os três casos:
+
+    - **criado**: arquivo novo é parseado e inserido;
+    - **modificado**: hash diferente do registrado — os nós antigos daquele
+      arquivo são removidos e reinseridos;
+    - **removido**: arquivo que saiu do disco tem seus nós apagados do grafo.
+
+    Arquivos cujo hash não mudou são pulados. Use `force=True` para reparsear
+    tudo ignorando o cache — note que `force` não é o que remove órfãos; a
+    detecção de remoção é sempre feita.
 
     Args:
         repo_path: Caminho do repositório.
@@ -130,8 +138,29 @@ def index_repository(
     # para os demais critérios de _should_ignore).
     files = [f for f in files if not _should_ignore(f)]
 
+    # Arquivos que sumiram do disco desde a última indexação. Comparamos contra
+    # `files` — tudo que o walk encontrou — e não contra a lista de arquivos a
+    # reindexar, que exclui justamente os inalterados (que continuam existindo).
+    # Precisa vir antes do early return abaixo: apagar o último arquivo do repo
+    # deixa `files` vazio e ainda assim exige limpeza.
+    removed_files: list[str] = []
+    if store is not None and not dry_run:
+        on_disk = {str(f) for f in files}
+        for indexed in store.get_indexed_files():
+            # O mesmo store pode ter indexado outra árvore antes; só considera
+            # sumido o que estava sob a raiz que estamos varrendo agora.
+            if not Path(indexed).is_relative_to(repo_path):
+                continue
+            if indexed not in on_disk:
+                store.delete_nodes_by_file(indexed)
+                store.delete_file_index(indexed)
+                removed_files.append(indexed)
+                logger.info("Removido do grafo (não está mais no disco): %s", indexed)
+
     if not files:
         if not quiet:
+            if removed_files:
+                console.print(f"[green]✓ {len(removed_files)} arquivo(s) removido(s) do grafo.[/green]")
             console.print("[yellow]⚠ Nenhum arquivo parseável encontrado.[/yellow]")
         if dry_run:
             return []
@@ -164,6 +193,8 @@ def index_repository(
 
     if not files_to_index:
         if not quiet:
+            if removed_files:
+                console.print(f"[green]✓ {len(removed_files)} arquivo(s) removido(s) do grafo.[/green]")
             console.print(f"[green]✓ {len(files)} arquivo(s) já indexado(s), nada a fazer.[/green]")
             console.print("  Use --rebuild para forçar reindexação completa.")
         return store  # type: ignore[return-value]
@@ -231,13 +262,18 @@ def index_repository(
         console.print("\n[bold green]✓ Indexação concluída![/bold green]")
         console.print(f"  Arquivos indexados: {len(files_to_index)}")
         console.print(f"  Arquivos pulados: {skipped}")
+        if removed_files:
+            console.print(f"  Arquivos removidos: {len(removed_files)}")
         if stats:
             console.print(f"  Total no grafo: {stats.total_files} arquivos")
             console.print(f"  Nós: {stats.total_nodes}")
             console.print(f"  Arestas: {stats.total_edges}")
             console.print(f"  Linguagens: {', '.join(stats.by_language.keys())}")
             console.print(f"  Tamanho do banco: {stats.db_size_bytes / 1024:.1f} KB")
-    logger.info("Indexação concluída: %d arquivos, %d nós, %d arestas", len(files_to_index), total_nodes, total_edges)
+    logger.info(
+        "Indexação concluída: %d arquivos, %d nós, %d arestas, %d removidos",
+        len(files_to_index), total_nodes, total_edges, len(removed_files),
+    )
 
     if errors and not quiet:
         console.print(f"\n[yellow]⚠ {len(errors)} erro(s) durante indexação:[/yellow]")

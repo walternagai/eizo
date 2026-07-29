@@ -111,23 +111,79 @@ class TestIncrementalIndexing:
         assert stats2.total_nodes > stats1.total_nodes
 
     def test_deleted_file_nodes_removed(self, sample_python_repo: Path) -> None:
-        """Arquivo deletado do disco não fica órfão no grafo."""
+        """Arquivo deletado do disco não deixa suas definições órfãs no grafo."""
+        helpers = sample_python_repo / "utils" / "helpers.py"
         store = index_repository(sample_python_repo)
-        stats1 = store.get_stats()
-        assert stats1.total_nodes > 0
+        assert store.get_nodes_by_name("greet", kind="function")
 
-        # Remove um arquivo do disco
-        (sample_python_repo / "utils" / "helpers.py").unlink()
-
-        # Reindexa — o arquivo foi removido do disco, mas o eizo não detecta
-        # automaticamente (apenas pula reindexação de arquivos que existem).
-        # Verificamos que os nós do arquivo removido não são duplicados.
+        helpers.unlink()
         store2 = index_repository(sample_python_repo, store)
-        stats2 = store2.get_stats()
 
-        # Os nós do arquivo removido ainda estão no grafo (eizo não detecta
-        # remoção de arquivo automaticamente), mas não devem ter duplicado.
-        assert stats2.total_nodes <= stats1.total_nodes
+        assert not store2.get_nodes_by_name("greet", kind="function")
+        assert not store2.get_file_index_entry(str(helpers))
+        # main.py continua no disco e continua chamando greet — esse nó de call
+        # é referência real ao código existente, não órfão do arquivo removido.
+        assert store2.get_nodes_by_name("greet", kind="call")
+
+    def test_deleting_every_file_empties_graph(self, sample_python_repo: Path) -> None:
+        """Esvaziar o repositório esvazia o grafo.
+
+        Caso limite: sem nenhum arquivo parseável restante, a varredura sai cedo
+        — a limpeza precisa acontecer antes desse early return.
+        """
+        store = index_repository(sample_python_repo)
+        assert store.get_stats().total_nodes > 0
+
+        for f in sample_python_repo.rglob("*.py"):
+            f.unlink()
+
+        store2 = index_repository(sample_python_repo, store)
+        assert store2.get_stats().total_nodes == 0
+        assert store2.get_indexed_files() == []
+
+    def test_renamed_file_moves_nodes(self, sample_python_repo: Path) -> None:
+        """Renomear um arquivo não deixa o caminho antigo para trás."""
+        store = index_repository(sample_python_repo)
+        antigo = sample_python_repo / "main.py"
+        novo = sample_python_repo / "entrypoint.py"
+        antigo.rename(novo)
+
+        store2 = index_repository(sample_python_repo, store)
+        indexados = store2.get_indexed_files()
+
+        assert str(novo) in indexados
+        assert str(antigo) not in indexados
+        assert store2.get_nodes_by_name("main")  # o símbolo segue existindo
+
+    def test_unchanged_files_are_not_pruned(self, sample_python_repo: Path) -> None:
+        """A limpeza compara com tudo no disco, não só com o que foi reindexado.
+
+        Arquivos inalterados são pulados na reindexação; se a comparação usasse
+        essa lista, eles seriam apagados por engano.
+        """
+        store = index_repository(sample_python_repo)
+        antes = store.get_stats().total_nodes
+
+        store2 = index_repository(sample_python_repo, store)  # nada mudou
+
+        assert store2.get_stats().total_nodes == antes
+        assert len(store2.get_indexed_files()) == 3
+
+    def test_prune_is_scoped_to_indexed_root(self, sample_python_repo: Path, tmp_path: Path) -> None:
+        """Indexar uma subárvore não apaga o que está fora dela.
+
+        O mesmo store pode ter indexado outra raiz antes; só é considerado
+        "sumido" o que estava sob a raiz varrida agora.
+        """
+        store = index_repository(sample_python_repo)
+        de_fora = str(tmp_path / "outro_projeto" / "x.py")
+        store.upsert_file_index(de_fora, "hash", 0.0, "2024-01-01T00:00:00Z")
+
+        index_repository(sample_python_repo / "utils", store)
+
+        assert de_fora in store.get_indexed_files()
+        # e o main.py da raiz, fora da subárvore varrida, também sobrevive
+        assert str(sample_python_repo / "main.py") in store.get_indexed_files()
 
 
 # ─── FTS5 full-text search ─────────────────────────────────────

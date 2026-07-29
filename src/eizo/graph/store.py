@@ -322,6 +322,11 @@ class GraphStore:
         )
         self.conn.commit()
 
+    def get_indexed_files(self) -> list[str]:
+        """Retorna os caminhos de todos os arquivos presentes no índice incremental."""
+        rows = self.conn.execute("SELECT file_path FROM file_index").fetchall()
+        return [r["file_path"] for r in rows]
+
     def delete_file_index(self, file_path: str) -> None:
         """Remove entry de indexação incremental para um arquivo."""
         self.conn.execute("DELETE FROM file_index WHERE file_path = ?", (file_path,))
