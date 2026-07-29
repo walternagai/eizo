@@ -302,10 +302,10 @@ class TestFindHotspotsRealIndexer:
 class TestCliDead:
     """Testa o comando 'eizo dead'."""
 
-    def test_dead_no_results(self, tmp_path: Path) -> None:
+    def test_dead_no_results(self, indexed_empty_repo: Path) -> None:
         """Dead em repositório vazio."""
         runner = CliRunner()
-        result = runner.invoke(main, ["dead", "--repo", str(tmp_path)])
+        result = runner.invoke(main, ["dead", "--repo", str(indexed_empty_repo)])
         assert result.exit_code == 0
         assert "Nenhum código morto" in result.output
 
@@ -370,10 +370,10 @@ class TestCliDead:
 class TestCliHotspots:
     """Testa o comando 'eizo hotspots'."""
 
-    def test_hotspots_empty(self, tmp_path: Path) -> None:
+    def test_hotspots_empty(self, indexed_empty_repo: Path) -> None:
         """Hotspots em repositório vazio."""
         runner = CliRunner()
-        result = runner.invoke(main, ["hotspots", "--repo", str(tmp_path)])
+        result = runner.invoke(main, ["hotspots", "--repo", str(indexed_empty_repo)])
         assert result.exit_code == 0
         assert "Nenhum hotspot" in result.output
 

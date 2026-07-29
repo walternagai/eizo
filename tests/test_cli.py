@@ -101,10 +101,10 @@ class TestCliInit:
 class TestCliSearch:
     """Testes para o comando 'eizo search'."""
 
-    def test_search_no_results(self, tmp_path: Path) -> None:
+    def test_search_no_results(self, indexed_empty_repo: Path) -> None:
         """Search sem resultados deve mostrar mensagem."""
         runner = CliRunner()
-        result = runner.invoke(main, ["search", "nonexistent", "--repo", str(tmp_path)])
+        result = runner.invoke(main, ["search", "nonexistent", "--repo", str(indexed_empty_repo)])
         assert result.exit_code == 0
         assert "Nenhum resultado" in result.output
 
@@ -161,10 +161,10 @@ class TestCliSearch:
 class TestCliTrace:
     """Testes para o comando 'eizo trace'."""
 
-    def test_trace_not_found(self, tmp_path: Path) -> None:
+    def test_trace_not_found(self, indexed_empty_repo: Path) -> None:
         """Trace de símbolo inexistente."""
         runner = CliRunner()
-        result = runner.invoke(main, ["trace", "nonexistent", "--repo", str(tmp_path)])
+        result = runner.invoke(main, ["trace", "nonexistent", "--repo", str(indexed_empty_repo)])
         assert result.exit_code == 0
         assert "não encontrado" in result.output
 
@@ -279,10 +279,10 @@ class TestCliTrace:
 class TestCliImpact:
     """Testes para o comando 'eizo impact'."""
 
-    def test_impact_not_found(self, tmp_path: Path) -> None:
+    def test_impact_not_found(self, indexed_empty_repo: Path) -> None:
         """Impact de símbolo inexistente."""
         runner = CliRunner()
-        result = runner.invoke(main, ["impact", "nonexistent", "--repo", str(tmp_path)])
+        result = runner.invoke(main, ["impact", "nonexistent", "--repo", str(indexed_empty_repo)])
         assert result.exit_code == 0
         assert "não encontrado" in result.output
 
@@ -302,10 +302,10 @@ class TestCliImpact:
 class TestCliArch:
     """Testes para o comando 'eizo arch'."""
 
-    def test_arch_empty(self, tmp_path: Path) -> None:
+    def test_arch_empty(self, indexed_empty_repo: Path) -> None:
         """Arch em repositório vazio."""
         runner = CliRunner()
-        result = runner.invoke(main, ["arch", "--repo", str(tmp_path)])
+        result = runner.invoke(main, ["arch", "--repo", str(indexed_empty_repo)])
         assert result.exit_code == 0
         assert "Grafo vazio" in result.output
 
@@ -325,10 +325,10 @@ class TestCliArch:
 class TestCliStatus:
     """Testes para o comando 'eizo status'."""
 
-    def test_status_empty(self, tmp_path: Path) -> None:
+    def test_status_empty(self, indexed_empty_repo: Path) -> None:
         """Status em repositório vazio."""
         runner = CliRunner()
-        result = runner.invoke(main, ["status", "--repo", str(tmp_path)])
+        result = runner.invoke(main, ["status", "--repo", str(indexed_empty_repo)])
         assert result.exit_code == 0
         assert "Grafo vazio" in result.output
 
@@ -569,10 +569,10 @@ class TestCliColor:
 class TestCliArchitecture:
     """Testes para o comando 'eizo architecture' (alias de 'arch')."""
 
-    def test_architecture_empty(self, tmp_path: Path) -> None:
+    def test_architecture_empty(self, indexed_empty_repo: Path) -> None:
         """architecture em store vazio mostra mensagem."""
         runner = CliRunner()
-        result = runner.invoke(main, ["architecture", "--repo", str(tmp_path)])
+        result = runner.invoke(main, ["architecture", "--repo", str(indexed_empty_repo)])
         assert result.exit_code == 0
         assert "Grafo vazio" in result.output
 
@@ -712,3 +712,74 @@ class TestCliConfig:
         assert result.exit_code == 0
         assert "Aviso: config inválido" in result.output
         assert "Status do Grafo" in result.output
+
+
+class TestCliUnindexedRepo:
+    """Repositório sem `.eizo/graph.db` deve falhar de forma acionável.
+
+    Antes, consultar um repo não indexado criava um grafo vazio como efeito
+    colateral e reportava "nenhum resultado" — indistinguível de uma busca
+    legitimamente sem correspondências.
+    """
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            ["search", "foo"],
+            ["trace", "foo"],
+            ["impact", "foo"],
+            ["arch"],
+            ["architecture"],
+            ["status"],
+            ["dead"],
+            ["hotspots"],
+            ["export", "dot"],
+        ],
+    )
+    def test_query_on_unindexed_repo_fails(self, tmp_path: Path, args: list[str]) -> None:
+        """Comandos de consulta saem com erro e orientam a rodar init."""
+        runner = CliRunner()
+        result = runner.invoke(main, [*args, "--repo", str(tmp_path)])
+        assert result.exit_code == 1
+        assert "não indexado" in result.output
+        assert "eizo init" in result.output
+
+    def test_query_on_unindexed_repo_creates_nothing(self, tmp_path: Path) -> None:
+        """A consulta falha sem criar `.eizo/` como efeito colateral."""
+        runner = CliRunner()
+        runner.invoke(main, ["search", "foo", "--repo", str(tmp_path)])
+        assert not (tmp_path / ".eizo").exists()
+
+    def test_init_still_creates_graph(self, tmp_path: Path) -> None:
+        """`init` continua criando o grafo — não é afetado pela checagem."""
+        (tmp_path / "test.py").write_text("def foo(): pass\n")
+        runner = CliRunner()
+        result = runner.invoke(main, ["init", str(tmp_path)])
+        assert result.exit_code == 0
+        assert (tmp_path / ".eizo" / "graph.db").exists()
+
+
+class TestCliCorruptedDatabase:
+    """Banco corrompido deve virar mensagem, não traceback de sqlite3."""
+
+    @pytest.fixture
+    def corrupted_repo(self, tmp_path: Path) -> Path:
+        eizo_dir = tmp_path / ".eizo"
+        eizo_dir.mkdir()
+        (eizo_dir / "graph.db").write_bytes(b"isto nao e um banco sqlite" * 64)
+        return tmp_path
+
+    def test_search_on_corrupted_db(self, corrupted_repo: Path) -> None:
+        """Erro é reportado com caminho e sugestão de rebuild."""
+        runner = CliRunner()
+        result = runner.invoke(main, ["search", "foo", "--repo", str(corrupted_repo)])
+        assert result.exit_code == 1
+        assert "corrompido" in result.output
+        assert "eizo init --rebuild" in result.output
+
+    def test_corrupted_db_does_not_leak_traceback(self, corrupted_repo: Path) -> None:
+        """Nenhum traceback de sqlite3 chega ao usuário."""
+        runner = CliRunner()
+        result = runner.invoke(main, ["status", "--repo", str(corrupted_repo)])
+        assert "Traceback" not in result.output
+        assert "sqlite3.DatabaseError" not in result.output

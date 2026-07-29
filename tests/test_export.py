@@ -373,10 +373,10 @@ class TestCliExport:
         assert result.exit_code == 0
         assert "classDiagram" in result.output
 
-    def test_export_empty_store(self, tmp_path: Path) -> None:
+    def test_export_empty_store(self, indexed_empty_repo: Path) -> None:
         """export em store vazio não falha."""
         runner = CliRunner()
-        result = runner.invoke(main, ["export", "dot", "--repo", str(tmp_path)])
+        result = runner.invoke(main, ["export", "dot", "--repo", str(indexed_empty_repo)])
         assert result.exit_code == 0
         assert "digraph" in result.output
 

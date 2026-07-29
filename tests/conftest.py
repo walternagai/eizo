@@ -16,6 +16,20 @@ def store(tmp_path: Path) -> GraphStore:
 
 
 @pytest.fixture
+def indexed_empty_repo(tmp_path: Path) -> Path:
+    """Repositório já indexado porém sem símbolos.
+
+    Diferente de um `tmp_path` cru: aqui `.eizo/graph.db` existe de fato, então
+    os comandos de consulta o tratam como grafo vazio (saída normal, exit 0) em
+    vez de repositório não indexado (erro, exit 1).
+    """
+    store = GraphStore(tmp_path)
+    store.conn.execute("SELECT 1")  # força a criação do arquivo do banco
+    store.close()
+    return tmp_path
+
+
+@pytest.fixture
 def sample_python_file() -> str:
     """Código Python de exemplo para testes de parser."""
     return '''
