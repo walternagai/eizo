@@ -24,9 +24,15 @@ except ImportError:
     TS_LANGUAGE = None
 
 
-def _node_id(name: str, file_path: str, line: int) -> str:
-    """Gera um ID único para um nó."""
-    raw = f"{file_path}:{name}:{line}"
+def _node_id(name: str, file_path: str, line: int, column: int = 0) -> str:
+    """Gera um ID único para um nó.
+
+    Inclui a coluna além da linha: arquivos minificados colocam múltiplos
+    símbolos na mesma linha, e "arquivo:nome:linha" sozinho colide entre eles
+    — era o caso de um vendor .min.js, com milhares de ids duplicados
+    fundindo símbolos distintos num único nó.
+    """
+    raw = f"{file_path}:{name}:{line}:{column}"
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
@@ -175,11 +181,12 @@ class TypeScriptParser(BaseParser):
 
         name = _get_text(source, name_node)
         start_line = node.start_point[0] + 1
+        start_col = node.start_point[1]
         end_line = node.end_point[0] + 1
         code = _get_text(source, node)
 
         func_node = Node(
-            id=_node_id(name, file_path, start_line),
+            id=_node_id(name, file_path, start_line, start_col),
             name=name,
             kind="function",
             file_path=file_path,
@@ -216,11 +223,12 @@ class TypeScriptParser(BaseParser):
 
         name = _get_text(source, name_node)
         start_line = node.start_point[0] + 1
+        start_col = node.start_point[1]
         end_line = node.end_point[0] + 1
         code = _get_text(source, node)
 
         method_node = Node(
-            id=_node_id(name, file_path, start_line),
+            id=_node_id(name, file_path, start_line, start_col),
             name=name,
             kind="method",
             file_path=file_path,
@@ -272,11 +280,12 @@ class TypeScriptParser(BaseParser):
         next_parent_id = parent_id
         if name:
             start_line = node.start_point[0] + 1
+            start_col = node.start_point[1]
             end_line = node.end_point[0] + 1
             code = _get_text(source, node)
 
             func_node = Node(
-                id=_node_id(name, file_path, start_line),
+                id=_node_id(name, file_path, start_line, start_col),
                 name=name,
                 kind=kind,
                 file_path=file_path,
@@ -314,11 +323,12 @@ class TypeScriptParser(BaseParser):
 
         name = _get_text(source, name_node)
         start_line = node.start_point[0] + 1
+        start_col = node.start_point[1]
         end_line = node.end_point[0] + 1
         code = _get_text(source, node)
 
         class_node = Node(
-            id=_node_id(name, file_path, start_line),
+            id=_node_id(name, file_path, start_line, start_col),
             name=name,
             kind="class",
             file_path=file_path,
@@ -345,7 +355,8 @@ class TypeScriptParser(BaseParser):
                             if base_child.type in ("identifier", "type_identifier"):
                                 base_name = _get_text(source, base_child)
                                 base_line = base_child.start_point[0] + 1
-                                base_id = _node_id(base_name, file_path, base_line)
+                                base_col = base_child.start_point[1]
+                                base_id = _node_id(base_name, file_path, base_line, base_col)
                                 # Cria nó stub para a classe base (pode estar em outro arquivo)
                                 base_node = Node(
                                     id=base_id,
@@ -384,7 +395,9 @@ class TypeScriptParser(BaseParser):
 
         module_name = _get_text(source, source_node).strip("'\"")
         import_node = Node(
-            id=_node_id(f"import:{module_name}", file_path, source_node.start_point[0] + 1),
+            id=_node_id(
+                f"import:{module_name}", file_path, source_node.start_point[0] + 1, source_node.start_point[1]
+            ),
             name=module_name,
             kind="import",
             file_path=file_path,
@@ -414,20 +427,29 @@ class TypeScriptParser(BaseParser):
         if func_node is None:
             return
 
+        # Note que o nó de posição varia: para "obj.method()" a posição
+        # correta é a do identificador `method`, não a de `func_node` (o nó
+        # "member_expression" inteiro, que engloba "obj.method" e começa em
+        # `obj`) — senão duas chamadas encadeadas ao mesmo método
+        # ("x.f().f()") colidem no mesmo id, porque ambos os
+        # "member_expression" começam na posição de `x`.
         if func_node.type == "identifier":
             call_name = _get_text(source, func_node)
+            name_node = func_node
         elif func_node.type == "member_expression":
             prop = func_node.child_by_field_name("property")
             if prop:
                 call_name = _get_text(source, prop)
+                name_node = prop
             else:
                 return
         else:
             return
 
-        call_line = func_node.start_point[0] + 1
+        call_line = name_node.start_point[0] + 1
+        call_col = name_node.start_point[1]
         call_node = Node(
-            id=_node_id(f"call:{call_name}", file_path, call_line),
+            id=_node_id(f"call:{call_name}", file_path, call_line, call_col),
             name=call_name,
             kind="call",
             file_path=file_path,

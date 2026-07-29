@@ -24,9 +24,15 @@ except ImportError:
     PYTHON_LANGUAGE = None
 
 
-def _node_id(name: str, file_path: str, line: int) -> str:
-    """Gera um ID único para um nó."""
-    raw = f"{file_path}:{name}:{line}"
+def _node_id(name: str, file_path: str, line: int, column: int = 0) -> str:
+    """Gera um ID único para um nó.
+
+    Inclui a coluna além da linha: arquivos minificados colocam múltiplos
+    símbolos na mesma linha, e "arquivo:nome:linha" sozinho colide entre eles
+    — era o caso de um vendor .min.js, com milhares de ids duplicados
+    fundindo símbolos distintos num único nó.
+    """
+    raw = f"{file_path}:{name}:{line}:{column}"
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
@@ -159,6 +165,7 @@ class PythonParser(BaseParser):
 
         name = _get_text(source, name_node)
         start_line = node.start_point[0] + 1
+        start_col = node.start_point[1]
         end_line = node.end_point[0] + 1
         code = _get_text(source, node)
         docstring = _get_docstring(source, node)
@@ -166,7 +173,7 @@ class PythonParser(BaseParser):
         kind = "method" if parent_id and parent_id != _node_id("__file__", file_path, 0) else "function"
 
         func_node = Node(
-            id=_node_id(name, file_path, start_line),
+            id=_node_id(name, file_path, start_line, start_col),
             name=name,
             kind=kind,
             file_path=file_path,
@@ -205,12 +212,13 @@ class PythonParser(BaseParser):
 
         name = _get_text(source, name_node)
         start_line = node.start_point[0] + 1
+        start_col = node.start_point[1]
         end_line = node.end_point[0] + 1
         code = _get_text(source, node)
         docstring = _get_docstring(source, node)
 
         class_node = Node(
-            id=_node_id(name, file_path, start_line),
+            id=_node_id(name, file_path, start_line, start_col),
             name=name,
             kind="class",
             file_path=file_path,
@@ -236,7 +244,8 @@ class PythonParser(BaseParser):
                 if base.type == "identifier":
                     base_name = _get_text(source, base)
                     base_line = base.start_point[0] + 1
-                    base_id = _node_id(base_name, file_path, base_line)
+                    base_col = base.start_point[1]
+                    base_id = _node_id(base_name, file_path, base_line, base_col)
                     # Cria nó stub para a classe base (pode estar em outro arquivo)
                     base_node = Node(
                         id=base_id,
@@ -274,7 +283,9 @@ class PythonParser(BaseParser):
             if child.type == "dotted_name":
                 module_name = _get_text(source, child)
                 import_node = Node(
-                    id=_node_id(f"import:{module_name}", file_path, child.start_point[0] + 1),
+                    id=_node_id(
+                        f"import:{module_name}", file_path, child.start_point[0] + 1, child.start_point[1]
+                    ),
                     name=module_name,
                     kind="import",
                     file_path=file_path,
@@ -325,7 +336,12 @@ class PythonParser(BaseParser):
 
             name = _get_text(source, dotted_node)
             import_node = Node(
-                id=_node_id(f"import:{module_name}.{name}", file_path, dotted_node.start_point[0] + 1),
+                id=_node_id(
+                    f"import:{module_name}.{name}",
+                    file_path,
+                    dotted_node.start_point[0] + 1,
+                    dotted_node.start_point[1],
+                ),
                 name=f"{module_name}.{name}",
                 kind="import",
                 file_path=file_path,
@@ -355,22 +371,30 @@ class PythonParser(BaseParser):
         if func_node is None:
             return
 
-        # Pega o nome da função chamada
+        # Pega o nome da função chamada. Note que o próprio nó de posição
+        # varia: para "obj.method()" a posição correta é a do identificador
+        # `method`, não a de `func_node` (o nó "attribute" inteiro, que
+        # engloba "obj.method" e começa em `obj`) — senão duas chamadas
+        # encadeadas ao mesmo método ("x.f().f()") colidem no mesmo id,
+        # porque ambos os "attribute" começam na posição de `x`.
         if func_node.type == "identifier":
             call_name = _get_text(source, func_node)
+            name_node = func_node
         elif func_node.type == "attribute":
             # method calls: obj.method
             attr = func_node.child_by_field_name("attribute")
             if attr:
                 call_name = _get_text(source, attr)
+                name_node = attr
             else:
                 return
         else:
             return
 
-        call_line = func_node.start_point[0] + 1
+        call_line = name_node.start_point[0] + 1
+        call_col = name_node.start_point[1]
         call_node = Node(
-            id=_node_id(f"call:{call_name}", file_path, call_line),
+            id=_node_id(f"call:{call_name}", file_path, call_line, call_col),
             name=call_name,
             kind="call",
             file_path=file_path,
