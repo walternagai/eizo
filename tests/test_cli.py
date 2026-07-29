@@ -6,6 +6,7 @@ import json
 import logging
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
@@ -96,6 +97,91 @@ class TestCliInit:
         result = runner.invoke(main, ["init", str(repo_a), "--repo", str(repo_b)])
         assert result.exit_code == 0
         assert (repo_b / ".eizo" / "graph.db").exists()
+
+
+class TestCliWatch:
+    """Testes para o comando 'eizo watch'.
+
+    O comando roda um loop infinito (`while True: ... time.sleep(interval)`) —
+    para não travar a suíte, os testes mockam `time.sleep` para levantar
+    KeyboardInterrupt após um número controlado de iterações, driblando o
+    loop sem precisar de threads ou timeouts reais.
+    """
+
+    def test_watch_indexes_and_stops_on_interrupt(self, tmp_path: Path) -> None:
+        """Primeira passada indexa o repo; Ctrl+C encerra de forma limpa."""
+        (tmp_path / "a.py").write_text("def a(): pass\n")
+
+        with patch("eizo.cli.time.sleep", side_effect=KeyboardInterrupt):
+            runner = CliRunner()
+            result = runner.invoke(main, ["watch", "--repo", str(tmp_path), "--interval", "0.2"])
+
+        assert result.exit_code == 0
+        assert "Observando" in result.output
+        assert "Interrompido" in result.output
+        store = GraphStore(tmp_path)
+        assert store.get_nodes_by_name("a", kind="function")
+
+    def test_watch_reports_change_between_ticks(self, tmp_path: Path) -> None:
+        """Uma mudança feita entre duas iterações aparece resumida na saída."""
+        (tmp_path / "a.py").write_text("def a(): pass\n")
+
+        calls = {"n": 0}
+
+        def fake_sleep(_seconds: float) -> None:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                (tmp_path / "b.py").write_text("def b(): pass\n")
+            else:
+                raise KeyboardInterrupt
+
+        with patch("eizo.cli.time.sleep", side_effect=fake_sleep):
+            runner = CliRunner()
+            result = runner.invoke(main, ["watch", "--repo", str(tmp_path), "--interval", "0.2"])
+
+        assert result.exit_code == 0
+        assert "+1 arquivo(s)" in result.output
+
+    def test_watch_silent_when_nothing_changes(self, tmp_path: Path) -> None:
+        """Ticks sem mudança nenhuma não geram linha de resumo."""
+        (tmp_path / "a.py").write_text("def a(): pass\n")
+
+        calls = {"n": 0}
+
+        def fake_sleep(_seconds: float) -> None:
+            calls["n"] += 1
+            if calls["n"] >= 3:
+                raise KeyboardInterrupt
+
+        with patch("eizo.cli.time.sleep", side_effect=fake_sleep):
+            runner = CliRunner()
+            result = runner.invoke(main, ["watch", "--repo", str(tmp_path), "--interval", "0.2"])
+
+        assert result.exit_code == 0
+        lines_with_check = [line for line in result.output.splitlines() if "✓" in line]
+        # só a indexação inicial gera resumo — nada muda nos ticks seguintes
+        assert len(lines_with_check) == 1
+
+    def test_watch_reports_file_removal(self, tmp_path: Path) -> None:
+        """Um arquivo apagado entre ticks aparece como remoção no resumo."""
+        (tmp_path / "a.py").write_text("def a(): pass\n")
+        (tmp_path / "b.py").write_text("def b(): pass\n")
+
+        calls = {"n": 0}
+
+        def fake_sleep(_seconds: float) -> None:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                (tmp_path / "b.py").unlink()
+            else:
+                raise KeyboardInterrupt
+
+        with patch("eizo.cli.time.sleep", side_effect=fake_sleep):
+            runner = CliRunner()
+            result = runner.invoke(main, ["watch", "--repo", str(tmp_path), "--interval", "0.2"])
+
+        assert result.exit_code == 0
+        assert "-1 arquivo(s)" in result.output
 
 
 class TestCliSearch:

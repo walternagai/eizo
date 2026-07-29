@@ -65,6 +65,44 @@ A indexação é **incremental**: arquivos cujo conteúdo (hash SHA-256) não mu
 desde a última indexação são pulados automaticamente. Use `--force` ou `--rebuild`
 para forçar reindexação completa.
 
+`eizo init` também sincroniza com o disco: arquivos removidos ou renomeados
+desde a última indexação têm seus símbolos removidos do grafo automaticamente
+— sem flag, sem precisar de `--rebuild`.
+
+Se existir `.gitignore` e/ou `.eizoignore` na raiz do repositório indexado,
+seus padrões são respeitados (mesma sintaxe do git). `.eizoignore` serve para
+excluir da indexação algo que o git rastreia mas você não quer no grafo — por
+exemplo, um `vendor/` versionado de propósito.
+
+### Observar mudanças continuamente
+
+```bash
+# Reindexa a cada 2s (padrão) enquanto houver mudanças
+eizo watch
+
+# Intervalo customizado
+eizo watch --interval 1
+```
+
+Faz polling, não reage a eventos do sistema de arquivos — mas a indexação
+incremental já é rápida o bastante para isso não importar na prática. Ctrl+C
+para parar.
+
+### Comparar contra um ref git
+
+```bash
+# O que mudou (em símbolos) no working tree em relação a main
+eizo diff main
+
+# Contra um branch remoto
+eizo diff origin/main
+```
+
+Não precisa de `eizo init` — reparseia direto do disco e via `git show`, sem
+tocar no grafo indexado. Mostra apenas mudanças que afetam a *superfície* de
+símbolos (funções/classes/métodos adicionados ou removidos); uma edição que
+só muda o corpo de uma função não aparece.
+
 ### Buscar símbolos
 
 ```bash
@@ -97,6 +135,21 @@ eizo trace "main" --direction outgoing
 eizo trace "iniciar" --depth 5
 ```
 
+### Por que dois símbolos estão acoplados
+
+```bash
+# Caminho mais curto de dependência entre A e B
+eizo why main helper
+
+# Aumenta o limite de saltos da busca
+eizo why UserService Database --max-depth 15
+```
+
+É o inverso de `trace`: em vez de listar tudo que um símbolo chama, mostra
+especificamente *como* A chega em B (seguindo calls/inherits). Se só existir
+caminho na direção contrária (B depende de A), o comando reporta isso
+explicitamente em vez de forçar o resultado errado.
+
 ### Analisar impacto
 
 ```bash
@@ -121,6 +174,17 @@ Símbolos como `main`, `run`, `serve`, `cli`, `app`, `create_app`, `setup`,
 `teardown`, `handle` são considerados entrypoints por padrão e excluídos
 da análise.
 
+### Ciclos de import
+
+```bash
+eizo cycles
+```
+
+Detecta dependência circular entre arquivos (ex: `a.py` importa `b.py` que
+importa `a.py`). Resolve cada import para um arquivo candidato pela mesma
+heurística de nome usada em `trace`/`impact` — não é resolução real de
+import/módulo.
+
 ### Hotspots (símbolos críticos)
 
 ```bash
@@ -133,6 +197,16 @@ eizo hotspots --limit 50 --min-refs 5
 
 Símbolos com muitas referências são pontos críticos — mudanças neles têm
 alto impacto na base de código.
+
+### Métricas por símbolo
+
+```bash
+eizo metrics minha_funcao
+```
+
+Mostra fan-in (quantos símbolos distintos referenciam este), fan-out (quantos
+este referencia) e LOC (linhas da definição). Usa dados já existentes no
+grafo — sem análise nova de AST, então não inclui complexidade ciclomática.
 
 ### Exportar grafo
 
@@ -338,13 +412,18 @@ eizo status
 
 | Comando | Descrição |
 |---------|-----------|
-| `eizo init [path]` | Indexa repositório no grafo (incremental) |
+| `eizo init [path]` | Indexa repositório no grafo (incremental — cria, atualiza e remove) |
+| `eizo watch [path]` | Reindexa continuamente ao detectar mudanças (polling) |
+| `eizo diff <ref>` | Compara símbolos do working tree contra um ref git |
 | `eizo search <query>` | Busca símbolos |
 | `eizo trace <symbol>` | Call graph |
+| `eizo why <a> <b>` | Caminho de dependência entre dois símbolos |
 | `eizo impact <symbol>` | Análise de impacto |
 | `eizo arch` | Visão arquitetural |
 | `eizo dead` | Detecta código morto (sem callers) |
+| `eizo cycles` | Detecta ciclos de import entre arquivos |
 | `eizo hotspots` | Símbolos mais referenciados |
+| `eizo metrics <symbol>` | Fan-in, fan-out e LOC de um símbolo |
 | `eizo export dot\|mermaid\|json\|html` | Exporta grafo para visualização |
 | `eizo architecture` | Gera diagrama de arquitetura em Mermaid |
 | `eizo mcp` | Servidor MCP |

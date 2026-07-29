@@ -198,3 +198,41 @@ def empty() -> None: ...
         funcs = [n for n in nodes if n.kind == "function"]
         assert len(funcs) >= 1
         assert funcs[0].name == "empty"
+
+
+class TestPythonNodeIdDisambiguation:
+    """Regressão: _node_id inclui coluna, e chamadas encadeadas ao mesmo
+    método não colidem mais no mesmo id.
+
+    Ambos os defeitos vieram à tona ao indexar um arquivo vendorizado
+    minificado: 16.531 ids duplicados fundiam símbolos distintos num único
+    nó do grafo.
+    """
+
+    def test_same_name_same_line_distinct_columns_get_distinct_ids(self, parser: PythonParser) -> None:
+        """Duas funções HOMÔNIMAS na mesma linha física (estilo minificado).
+
+        É o caso real que colidia: nomes diferentes já produzem hashes
+        diferentes mesmo sem a coluna, por incluírem o nome — só o mesmo
+        nome na mesma linha física expõe se a coluna está de fato no
+        cálculo do id.
+        """
+        source = "def mul():pass;def mul():pass\n"
+        nodes, _ = parser.parse_file(Path("min.py"), source)
+        muls = [n for n in nodes if n.name == "mul" and n.kind == "function"]
+        assert len(muls) == 2
+        assert muls[0].line_start == muls[1].line_start == 1
+        assert muls[0].id != muls[1].id
+
+    def test_chained_calls_to_same_method_get_distinct_ids(self, parser: PythonParser) -> None:
+        """"x.f().f()" — duas chamadas a `f` na mesma linha, objetos diferentes.
+
+        Antes da correção, a posição usada era a do nó "attribute" inteiro
+        (que começa em `x`, o objeto), não a do identificador do método —
+        as duas chamadas a `f` colidiam no mesmo id.
+        """
+        source = "def run():\n    x.f().f()\n"
+        nodes, _ = parser.parse_file(Path("chain.py"), source)
+        calls = [n for n in nodes if n.kind == "call" and n.name == "f"]
+        assert len(calls) == 2
+        assert calls[0].id != calls[1].id

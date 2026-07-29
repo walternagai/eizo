@@ -171,3 +171,91 @@ class TestIndexRepositoryErrors:
             store = index_repository(repo)
             stats = store.get_stats()
             assert stats.total_nodes == 0
+
+
+class TestGitignoreSupport:
+    """`.gitignore` e `.eizoignore` na raiz do repositório são respeitados."""
+
+    def test_gitignore_excludes_matching_files(self, tmp_path: Path) -> None:
+        """Padrão glob simples (*.min.js) exclui arquivos correspondentes."""
+        (tmp_path / ".gitignore").write_text("*.min.js\n")
+        (tmp_path / "real.py").write_text("def real(): pass\n")
+        (tmp_path / "vendor.min.js").write_text("function huge(){}\n")
+
+        store = index_repository(tmp_path)
+        indexed = {Path(f).name for f in store.get_indexed_files()}
+
+        assert indexed == {"real.py"}
+
+    def test_gitignore_excludes_matching_directory(self, tmp_path: Path) -> None:
+        """Padrão de diretório (dist/) poda a subárvore inteira durante o walk."""
+        (tmp_path / ".gitignore").write_text("dist/\n")
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "real.py").write_text("def real(): pass\n")
+        (tmp_path / "dist").mkdir()
+        (tmp_path / "dist" / "built.py").write_text("def built(): pass\n")
+
+        store = index_repository(tmp_path)
+        indexed = {Path(f).name for f in store.get_indexed_files()}
+
+        assert indexed == {"real.py"}
+
+    def test_gitignore_negation_reincludes_file(self, tmp_path: Path) -> None:
+        """Padrão de negação (!) reinclui um arquivo excluído por regra anterior."""
+        (tmp_path / ".gitignore").write_text("*.min.js\n!important.min.js\n")
+        (tmp_path / "vendor.min.js").write_text("function huge(){}\n")
+        (tmp_path / "important.min.js").write_text("function keep(){}\n")
+
+        store = index_repository(tmp_path)
+        indexed = {Path(f).name for f in store.get_indexed_files()}
+
+        assert indexed == {"important.min.js"}
+
+    def test_eizoignore_combines_with_gitignore(self, tmp_path: Path) -> None:
+        """`.eizoignore` exclui além do que `.gitignore` já cobre."""
+        (tmp_path / ".gitignore").write_text("dist/\n")
+        (tmp_path / ".eizoignore").write_text("vendor/\n")
+        (tmp_path / "src.py").write_text("def real(): pass\n")
+        (tmp_path / "dist").mkdir()
+        (tmp_path / "dist" / "d.py").write_text("def d(): pass\n")
+        (tmp_path / "vendor").mkdir()
+        (tmp_path / "vendor" / "v.py").write_text("def v(): pass\n")
+
+        store = index_repository(tmp_path)
+        indexed = {Path(f).name for f in store.get_indexed_files()}
+
+        assert indexed == {"src.py"}
+
+    def test_no_ignore_files_indexes_everything(self, tmp_path: Path) -> None:
+        """Sem .gitignore/.eizoignore, nada muda em relação ao comportamento anterior."""
+        (tmp_path / "a.py").write_text("def a(): pass\n")
+        (tmp_path / "b.py").write_text("def b(): pass\n")
+
+        store = index_repository(tmp_path)
+        indexed = {Path(f).name for f in store.get_indexed_files()}
+
+        assert indexed == {"a.py", "b.py"}
+
+    def test_dry_run_respects_gitignore(self, tmp_path: Path) -> None:
+        """dry_run compartilha o mesmo walk — também respeita os padrões."""
+        (tmp_path / ".gitignore").write_text("*.min.js\n")
+        (tmp_path / "real.py").write_text("def real(): pass\n")
+        (tmp_path / "vendor.min.js").write_text("function huge(){}\n")
+
+        files = index_repository(tmp_path, dry_run=True)
+
+        names = {Path(f).name for f in files}  # type: ignore[union-attr]
+        assert names == {"real.py"}
+
+    def test_ignore_spec_scoped_to_indexed_root(self, tmp_path: Path) -> None:
+        """`.gitignore` só é lido a partir da raiz sendo indexada, não do cwd."""
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (tmp_path / ".gitignore").write_text("*.min.js\n")  # na raiz pai, não em sub/
+        (sub / "vendor.min.js").write_text("function huge(){}\n")
+
+        store = index_repository(sub)
+        indexed = {Path(f).name for f in store.get_indexed_files()}
+
+        # sub/ não tem seu próprio .gitignore, então nada é excluído
+        assert indexed == {"vendor.min.js"}

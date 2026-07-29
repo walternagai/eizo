@@ -554,6 +554,32 @@ class GraphStore:
 
         return results
 
+    def get_file_import_graph(self) -> dict[str, set[str]]:
+        """Constrói o grafo de imports em nível de arquivo: `file_path` →
+        conjunto de `file_path` importados por ele.
+
+        Resolve cada nó `kind='import'` para um arquivo candidato usando a
+        mesma heurística de `module_hint` já usada para desambiguar
+        definições homônimas (`_module_hint_matches_file`) — não é
+        resolução real de import/módulo, só aproximação best-effort.
+        Usado por `queries.cycles` para detectar dependência circular.
+        """
+        file_rows = self.conn.execute("SELECT DISTINCT file_path FROM nodes WHERE kind = 'file'").fetchall()
+        all_files = [r["file_path"] for r in file_rows]
+        graph: dict[str, set[str]] = {f: set() for f in all_files}
+
+        import_rows = self.conn.execute("SELECT * FROM nodes WHERE kind = 'import'").fetchall()
+        for row in import_rows:
+            node = self._row_to_node(row)
+            module_hint, _symbol = _extract_import_module_and_symbol(node.name)
+            for candidate_file in all_files:
+                if candidate_file == node.file_path:
+                    continue
+                if _module_hint_matches_file(module_hint, candidate_file):
+                    graph[node.file_path].add(candidate_file)
+
+        return graph
+
     # ─── Stats ─────────────────────────────────────────────────
 
     def get_stats(self) -> GraphStats:
