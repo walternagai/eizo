@@ -8,6 +8,7 @@ import logging
 import os
 from pathlib import Path
 
+import pathspec
 from rich.console import Console
 from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn
 
@@ -45,6 +46,23 @@ def _should_ignore(path: Path) -> bool:
     if path.name.startswith("."):
         return True
     return path.suffix in {".pyc", ".pyo", ".so", ".dll", ".dylib", ".egg-info"}
+
+
+def _load_ignore_spec(repo_path: Path) -> pathspec.PathSpec[pathspec.pattern.Pattern]:
+    """Carrega os padrões de `.gitignore` e `.eizoignore` da raiz do repositório.
+
+    Ambos usam a sintaxe gitignore (via `pathspec`) e são combinados num único
+    spec — `.eizoignore` serve para exclusões específicas do eizo além do que
+    já está no `.gitignore` (ex: manter um vendor/ versionado, mas não indexá-lo).
+    Só a raiz é lida; `.gitignore` aninhados em subdiretórios não são
+    combinados, ao contrário do git.
+    """
+    lines: list[str] = []
+    for name in (".gitignore", ".eizoignore"):
+        candidate = repo_path / name
+        if candidate.is_file():
+            lines.extend(candidate.read_text(encoding="utf-8", errors="replace").splitlines())
+    return pathspec.PathSpec.from_lines("gitignore", lines)
 
 
 def _get_parsers() -> list[BaseParser]:
@@ -121,22 +139,33 @@ def index_repository(
             return []
         return store  # type: ignore[return-value]
 
-    # Colete todos os arquivos parseáveis. Poda IGNORE_DIRS durante o walk
-    # (via os.walk, que permite modificar dirnames in-place) em vez de
-    # enumerar a árvore inteira e filtrar depois — importante para repos
-    # JS/TS onde node_modules pode ter dezenas de milhares de arquivos.
+    # Colete todos os arquivos parseáveis. Poda IGNORE_DIRS e os padrões de
+    # .gitignore/.eizoignore durante o walk (via os.walk, que permite
+    # modificar dirnames in-place) em vez de enumerar a árvore inteira e
+    # filtrar depois — importante para repos JS/TS onde node_modules pode
+    # ter dezenas de milhares de arquivos.
+    ignore_spec = _load_ignore_spec(repo_path)
     extensions = {e for p in parsers for e in p.extensions}
     files: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(repo_path):
-        dirnames[:] = [d for d in dirnames if d not in IGNORE_DIRS]
+        rel_dir = Path(dirpath).relative_to(repo_path)
+
+        def _dir_ignored(name: str, rel_dir: Path = rel_dir) -> bool:
+            rel = (rel_dir / name).as_posix() if str(rel_dir) != "." else name
+            # match_file() só reconhece padrões "só-diretório" (ex: "dist/")
+            # se o caminho testado também terminar em "/".
+            return ignore_spec.match_file(rel + "/")
+
+        dirnames[:] = [d for d in dirnames if d not in IGNORE_DIRS and not _dir_ignored(d)]
         for filename in filenames:
             if Path(filename).suffix in extensions:
                 files.append(Path(dirpath) / filename)
 
     # Filtra ignorados (arquivos ocultos, extensões binárias etc. — a poda
-    # acima já cobre os diretórios em IGNORE_DIRS, mas mantemos o filtro
-    # para os demais critérios de _should_ignore).
+    # acima já cobre os diretórios em IGNORE_DIRS/.gitignore/.eizoignore,
+    # mas mantemos o filtro para os demais critérios de _should_ignore).
     files = [f for f in files if not _should_ignore(f)]
+    files = [f for f in files if not ignore_spec.match_file(f.relative_to(repo_path).as_posix())]
 
     # Arquivos que sumiram do disco desde a última indexação. Comparamos contra
     # `files` — tudo que o walk encontrou — e não contra a lista de arquivos a

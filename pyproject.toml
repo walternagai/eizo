@@ -41,6 +41,9 @@ dependencies = [
     # da constraint transitiva pydantic>=2.11.
     "mcp>=1.28",
     "pyyaml>=6.0",
+    # >=1.1: versão testada com a factory "gitignore" (sucessora
+    # não-deprecated de "gitwildmatch") em PathSpec.from_lines().
+    "pathspec>=1.1",
 ]
 
 [project.optional-dependencies]
