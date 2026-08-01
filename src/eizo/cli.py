@@ -37,6 +37,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.tree import Tree
 
+from eizo import __version__
 from eizo.graph.schema import get_db_path
 from eizo.graph.store import GraphStore
 from eizo.indexer import index_repository
@@ -311,7 +312,7 @@ def _is_explicit(ctx: click.Context, param_name: str) -> bool:
 
 
 @click.group(invoke_without_command=True)
-@click.version_option(version="0.1.0", prog_name="eizo")
+@click.version_option(version=__version__, prog_name="eizo")
 @click.option(
     "--output-format",
     "output_format",

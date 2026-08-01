@@ -435,11 +435,13 @@ class TestCliVersion:
     """Testes para --version."""
 
     def test_version(self) -> None:
-        """--version deve mostrar a versão."""
+        """--version deve mostrar a versão (lida de eizo.__version__, não hardcoded)."""
+        from eizo import __version__
+
         runner = CliRunner()
         result = runner.invoke(main, ["--version"])
         assert result.exit_code == 0
-        assert "0.1.0" in result.output
+        assert __version__ in result.output
 
 
 class TestCliCompletion:
