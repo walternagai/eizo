@@ -16,6 +16,7 @@ from eizo.graph.store import GraphStore
 from eizo.parser.base import BaseParser
 from eizo.parser.go import GoParser
 from eizo.parser.python import PythonParser
+from eizo.parser.rust import RustParser
 from eizo.parser.typescript import TypeScriptParser
 
 console = Console()
@@ -87,6 +88,12 @@ def _get_parsers() -> list[BaseParser]:
     except RuntimeError as e:
         logger.warning("Go parser não disponível: %s", e)
         console.print(f"[yellow]⚠ Go parser não disponível: {e}[/yellow]")
+    try:
+        parsers.append(RustParser())
+        logger.debug("Rust parser inicializado")
+    except RuntimeError as e:
+        logger.warning("Rust parser não disponível: %s", e)
+        console.print(f"[yellow]⚠ Rust parser não disponível: {e}[/yellow]")
     return parsers
 
 

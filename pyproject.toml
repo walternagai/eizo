@@ -37,6 +37,7 @@ dependencies = [
     "tree-sitter-python>=0.23",
     "tree-sitter-typescript>=0.23",
     "tree-sitter-go>=0.23",
+    "tree-sitter-rust>=0.23",
     # >=1.28: versões anteriores geram o output schema das tools de forma
     # incompatível com pydantic>=2.11; este piso força a resolução correta
     # da constraint transitiva pydantic>=2.11.

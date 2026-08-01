@@ -18,7 +18,7 @@
 | Camada | Tecnologia |
 |--------|-----------|
 | CLI | Python 3.10+ / Click / Rich |
-| Parsing | Tree-sitter (Python + TypeScript/JavaScript + Go) |
+| Parsing | Tree-sitter (Python + TypeScript/JavaScript + Go + Rust) |
 | Grafo | SQLite (WAL mode, FTS5) |
 | MCP | `mcp` Python SDK |
 | Testes | pytest + pytest-cov |

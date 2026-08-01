@@ -145,7 +145,8 @@ src/eizo/
 │   ├── base.py     # Abstract BaseParser
 │   ├── python.py   # Tree-sitter Python parser
 │   ├── typescript.py # Tree-sitter TS/JS parser
-│   └── go.py       # Tree-sitter Go parser
+│   ├── go.py       # Tree-sitter Go parser
+│   └── rust.py     # Tree-sitter Rust parser
 ├── queries/
 │   ├── search.py   # search_symbols(), get_symbol_context()
 │   ├── trace.py    # trace_call_path() — call graph traversal
@@ -175,6 +176,19 @@ src/eizo/
   receiver type can even be declared later in the same file. `go.py`
   pre-scans all `type_spec` positions before the main walk so a method's
   `contains` edge can be resolved regardless of declaration order.
+- Rust has no classes: `struct_item`/`trait_item`/`enum_item` map to
+  `kind="class"`. Methods live in a separate `impl Type {...}` block (or
+  `impl Trait for Type {...}`), same "not AST-nested, order-independent"
+  problem as Go — `rust.py` reuses the same pre-scan-positions trick.
+  `impl Trait for Type` becomes an `inherits` edge (closest Rust analogue to
+  subclassing); `impl Type` alone doesn't.
+- **Known limitation**: `rust.py` can't see calls made *inside* a macro
+  invocation (`println!(...)`, `format!(...)`, `vec![...]`, etc.).
+  tree-sitter-rust doesn't parse a macro's arguments as expressions — it's
+  an opaque `token_tree` of raw tokens, since macro expansion rules are
+  arbitrary and the grammar can't interpret them without expanding the
+  macro. `d.speak()` inside `println!("{}", d.speak())` never becomes a
+  `call_expression`, so that call is silently absent from the graph.
 
 ## MCP quirks
 
@@ -216,11 +230,12 @@ src/eizo/
 - Coverage gate: 70%.
 - `cli.py`: 99% coverage; `__main__.py`: 100% coverage.
 - `asyncio_mode = auto` in pytest config.
-- 553 tests total. Test files include: `test_cli.py`, `test_main.py`, `test_indexer.py`,
+- 581 tests total. Test files include: `test_cli.py`, `test_main.py`, `test_indexer.py`,
   `test_indexer_extended.py`, `test_incremental.py`, `test_analysis.py`, `test_export.py`,
   `test_export_html.py`, `test_queries_extended.py`, `test_store_extended.py`,
   `test_parser_python_extended.py`, `test_parser_typescript_extended.py`,
   `test_parser_go.py`, `test_parser_go_extended.py`,
+  `test_parser_rust.py`, `test_parser_rust_extended.py`,
   `test_mcp_server.py`, `test_coverage_gaps.py`, `test_queries_cycles.py`,
   `test_queries_metrics.py`, `test_queries_why.py`, `test_queries_diff.py`,
   `test_cli_cycles.py`, `test_cli_metrics.py`, `test_cli_why.py`, `test_cli_diff.py`.
@@ -248,6 +263,7 @@ src/eizo/
   emits a warning).
 - `tree-sitter-go>=0.23` — Go parser. Exposes `language()` returning a
   PyCapsule, same pattern as `tree-sitter-python`/`tree-sitter-typescript`.
+- `tree-sitter-rust>=0.23` — Rust parser. Same PyCapsule pattern.
 
 ## Node identity
 
