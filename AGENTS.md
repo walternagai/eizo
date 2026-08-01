@@ -144,7 +144,8 @@ src/eizo/
 ├── parser/
 │   ├── base.py     # Abstract BaseParser
 │   ├── python.py   # Tree-sitter Python parser
-│   └── typescript.py # Tree-sitter TS/JS parser
+│   ├── typescript.py # Tree-sitter TS/JS parser
+│   └── go.py       # Tree-sitter Go parser
 ├── queries/
 │   ├── search.py   # search_symbols(), get_symbol_context()
 │   ├── trace.py    # trace_call_path() — call graph traversal
@@ -166,6 +167,14 @@ src/eizo/
 - Python inheritance field is `superclasses` (not `bases`).
 - TypeScript inheritance: `class_heritage` → `extends_clause` → `identifier`.
 - Docstring extraction: remove quote chars from the `string` node manually.
+- Go has no classes: `struct_type`/`interface_type` from `type_spec` map to
+  `kind="class"`; embedded (unnamed) struct fields map to `inherits`, since
+  that's Go's closest analogue to inheritance (composition).
+- Go methods (`func (r T) M()`) are **not** AST-nested inside their receiver
+  type's declaration, unlike Python/TS methods inside a class body — the
+  receiver type can even be declared later in the same file. `go.py`
+  pre-scans all `type_spec` positions before the main walk so a method's
+  `contains` edge can be resolved regardless of declaration order.
 
 ## MCP quirks
 
@@ -196,6 +205,8 @@ src/eizo/
   fixture: a repo whose `.eizo/graph.db` exists but has no symbols — distinct
   from a bare `tmp_path`, which query commands reject as *not indexed*.
 - `sample_python_file` / `sample_ts_file`: string fixtures for parser tests.
+- Go has no equivalent `sample_go_file` fixture; `test_parser_go.py` inlines
+  sources directly (matches the granularity of the other parser test files).
 - `sample_python_repo`: creates real dir tree for indexer tests.
 - Scalability regression is locked by `TestIndexingScales`, which counts SQLite
   VM steps via `set_progress_handler` rather than wall clock (deterministic).
@@ -205,10 +216,11 @@ src/eizo/
 - Coverage gate: 70%.
 - `cli.py`: 99% coverage; `__main__.py`: 100% coverage.
 - `asyncio_mode = auto` in pytest config.
-- 531 tests total. Test files include: `test_cli.py`, `test_main.py`, `test_indexer.py`,
+- 553 tests total. Test files include: `test_cli.py`, `test_main.py`, `test_indexer.py`,
   `test_indexer_extended.py`, `test_incremental.py`, `test_analysis.py`, `test_export.py`,
   `test_export_html.py`, `test_queries_extended.py`, `test_store_extended.py`,
   `test_parser_python_extended.py`, `test_parser_typescript_extended.py`,
+  `test_parser_go.py`, `test_parser_go_extended.py`,
   `test_mcp_server.py`, `test_coverage_gaps.py`, `test_queries_cycles.py`,
   `test_queries_metrics.py`, `test_queries_why.py`, `test_queries_diff.py`,
   `test_cli_cycles.py`, `test_cli_metrics.py`, `test_cli_why.py`, `test_cli_diff.py`.
@@ -234,6 +246,8 @@ src/eizo/
   support in the indexer. Uses the `"gitignore"` pattern factory name in
   `PathSpec.from_lines()`, not the older `"gitwildmatch"` alias (deprecated,
   emits a warning).
+- `tree-sitter-go>=0.23` — Go parser. Exposes `language()` returning a
+  PyCapsule, same pattern as `tree-sitter-python`/`tree-sitter-typescript`.
 
 ## Node identity
 

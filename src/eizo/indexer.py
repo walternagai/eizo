@@ -14,6 +14,7 @@ from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn
 
 from eizo.graph.store import GraphStore
 from eizo.parser.base import BaseParser
+from eizo.parser.go import GoParser
 from eizo.parser.python import PythonParser
 from eizo.parser.typescript import TypeScriptParser
 
@@ -80,6 +81,12 @@ def _get_parsers() -> list[BaseParser]:
     except RuntimeError as e:
         logger.warning("TypeScript parser não disponível: %s", e)
         console.print(f"[yellow]⚠ TypeScript parser não disponível: {e}[/yellow]")
+    try:
+        parsers.append(GoParser())
+        logger.debug("Go parser inicializado")
+    except RuntimeError as e:
+        logger.warning("Go parser não disponível: %s", e)
+        console.print(f"[yellow]⚠ Go parser não disponível: {e}[/yellow]")
     return parsers
 
 
