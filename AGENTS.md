@@ -146,7 +146,8 @@ src/eizo/
 │   ├── python.py   # Tree-sitter Python parser
 │   ├── typescript.py # Tree-sitter TS/JS parser
 │   ├── go.py       # Tree-sitter Go parser
-│   └── rust.py     # Tree-sitter Rust parser
+│   ├── rust.py     # Tree-sitter Rust parser
+│   └── java.py     # Tree-sitter Java parser
 ├── queries/
 │   ├── search.py   # search_symbols(), get_symbol_context()
 │   ├── trace.py    # trace_call_path() — call graph traversal
@@ -189,6 +190,17 @@ src/eizo/
   arbitrary and the grammar can't interpret them without expanding the
   macro. `d.speak()` inside `println!("{}", d.speak())` never becomes a
   `call_expression`, so that call is silently absent from the graph.
+- Java is the simplest of the four non-Python/TS parsers: methods/constructors
+  are always AST-nested inside their `class`/`interface`/`enum`/`record` body
+  (no Go/Rust-style out-of-band `impl`/receiver, no pre-scan needed).
+  `class`/`interface`/`enum`/`record` declarations all map to `kind="class"`.
+  `extends`/`implements` (class) and `extends` (interface, can list multiple
+  parents) all map to `inherits`.
+  `new Type(...)` (`object_creation_expression`) is a distinct grammar node
+  from `method_invocation`, unlike Python/Go/Rust where `Type()` is already an
+  ordinary call — handled separately as a call to `Type`'s constructor, with
+  `generic_type`/`scoped_type_identifier` unwrapped so `new HashMap<>()` and
+  `new java.util.HashMap()` both resolve to the simple name `HashMap`.
 
 ## MCP quirks
 
@@ -230,12 +242,13 @@ src/eizo/
 - Coverage gate: 70%.
 - `cli.py`: 99% coverage; `__main__.py`: 100% coverage.
 - `asyncio_mode = auto` in pytest config.
-- 581 tests total. Test files include: `test_cli.py`, `test_main.py`, `test_indexer.py`,
+- 609 tests total. Test files include: `test_cli.py`, `test_main.py`, `test_indexer.py`,
   `test_indexer_extended.py`, `test_incremental.py`, `test_analysis.py`, `test_export.py`,
   `test_export_html.py`, `test_queries_extended.py`, `test_store_extended.py`,
   `test_parser_python_extended.py`, `test_parser_typescript_extended.py`,
   `test_parser_go.py`, `test_parser_go_extended.py`,
   `test_parser_rust.py`, `test_parser_rust_extended.py`,
+  `test_parser_java.py`, `test_parser_java_extended.py`,
   `test_mcp_server.py`, `test_coverage_gaps.py`, `test_queries_cycles.py`,
   `test_queries_metrics.py`, `test_queries_why.py`, `test_queries_diff.py`,
   `test_cli_cycles.py`, `test_cli_metrics.py`, `test_cli_why.py`, `test_cli_diff.py`.
@@ -264,6 +277,7 @@ src/eizo/
 - `tree-sitter-go>=0.23` — Go parser. Exposes `language()` returning a
   PyCapsule, same pattern as `tree-sitter-python`/`tree-sitter-typescript`.
 - `tree-sitter-rust>=0.23` — Rust parser. Same PyCapsule pattern.
+- `tree-sitter-java>=0.23` — Java parser. Same PyCapsule pattern.
 
 ## Node identity
 

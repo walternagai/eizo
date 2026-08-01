@@ -15,6 +15,7 @@ from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn
 from eizo.graph.store import GraphStore
 from eizo.parser.base import BaseParser
 from eizo.parser.go import GoParser
+from eizo.parser.java import JavaParser
 from eizo.parser.python import PythonParser
 from eizo.parser.rust import RustParser
 from eizo.parser.typescript import TypeScriptParser
@@ -94,6 +95,12 @@ def _get_parsers() -> list[BaseParser]:
     except RuntimeError as e:
         logger.warning("Rust parser não disponível: %s", e)
         console.print(f"[yellow]⚠ Rust parser não disponível: {e}[/yellow]")
+    try:
+        parsers.append(JavaParser())
+        logger.debug("Java parser inicializado")
+    except RuntimeError as e:
+        logger.warning("Java parser não disponível: %s", e)
+        console.print(f"[yellow]⚠ Java parser não disponível: {e}[/yellow]")
     return parsers
 
 
