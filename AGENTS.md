@@ -266,10 +266,15 @@ src/eizo/
 
 ## Dependencies
 
-- `mcp>=1.28` is a floor, not cosmetic: earlier versions build tool output
-  schemas in a way that breaks with `pydantic>=2.11`, which `mcp` itself now
-  requires. A venv with `mcp>=1.28` and `pydantic<2.11` fails at
-  `create_server()` with `PydanticUserError`.
+- `mcp>=1.28,<2.0` is a floor **and a ceiling**, not cosmetic: earlier
+  versions build tool output schemas in a way that breaks with
+  `pydantic>=2.11`, which `mcp` itself now requires. A venv with `mcp>=1.28`
+  and `pydantic<2.11` fails at `create_server()` with `PydanticUserError`.
+  The `<2.0` ceiling is equally load-bearing: mcp 2.0 removed
+  `mcp.server.fastmcp` (the `FastMCP` import fails with `ModuleNotFoundError`)
+  and its `@mcp.tool()` decorator is untyped, breaking `mypy --strict` with
+  `untyped-decorator` on every tool. The code targets the 1.x API; do not
+  raise the ceiling without migrating `mcp/server.py` first.
 - `pathspec>=1.1` — gitignore-syntax matcher for `.gitignore`/`.eizoignore`
   support in the indexer. Uses the `"gitignore"` pattern factory name in
   `PathSpec.from_lines()`, not the older `"gitwildmatch"` alias (deprecated,

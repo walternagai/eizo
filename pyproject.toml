@@ -42,7 +42,10 @@ dependencies = [
     # >=1.28: versões anteriores geram o output schema das tools de forma
     # incompatível com pydantic>=2.11; este piso força a resolução correta
     # da constraint transitiva pydantic>=2.11.
-    "mcp>=1.28",
+    # <2.0: mcp 2.0 removeu mcp.server.fastmcp (ModuleNotFoundError) e o
+    # decorator @mcp.tool() deixou de ser tipado (mypy strict falha com
+    # untyped-decorator). O código usa a API 1.x.
+    "mcp>=1.28,<2.0",
     "pyyaml>=6.0",
     # >=1.1: versão testada com a factory "gitignore" (sucessora
     # não-deprecated de "gitwildmatch") em PathSpec.from_lines().
