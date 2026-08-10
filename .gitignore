@@ -28,3 +28,6 @@ coverage/
 .env
 .venv/
 venv/
+
+# Repositório sintético gerado por benchmarks/benchmark_index.py
+.bench_repo/
