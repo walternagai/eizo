@@ -319,16 +319,20 @@ src/eizo/
 - Coverage gate: 70%.
 - `cli.py`: 99% coverage; `__main__.py`: 100% coverage.
 - `asyncio_mode = auto` in pytest config.
-- 687 tests total. Test files include: `test_cli.py`, `test_main.py`, `test_indexer.py`,
+- 719 tests total. Test files include: `test_cli.py`, `test_main.py`, `test_indexer.py`,
   `test_indexer_extended.py`, `test_incremental.py`, `test_analysis.py`, `test_export.py`,
   `test_export_html.py`, `test_queries_extended.py`, `test_store_extended.py`,
-  `test_parser_python_extended.py`, `test_parser_typescript_extended.py`,
+  `test_parser_python.py`, `test_parser_python_extended.py`,
+  `test_parser_typescript.py`, `test_parser_typescript_extended.py`,
   `test_parser_go.py`, `test_parser_go_extended.py`,
   `test_parser_rust.py`, `test_parser_rust_extended.py`,
   `test_parser_java.py`, `test_parser_java_extended.py`,
   `test_parser_csharp.py`, `test_parser_csharp_extended.py`,
   `test_parser_php.py`, `test_parser_php_extended.py`,
   `test_parser_ruby.py`, `test_parser_ruby_extended.py`,
+  `test_parser_fuzz.py`, `test_parser_base.py`, `test_models.py`,
+  `test_schema.py`, `test_store.py`, `test_queries_search.py`,
+  `test_queries_trace.py`, `test_queries_impact.py`,
   `test_mcp_server.py`, `test_coverage_gaps.py`, `test_queries_cycles.py`,
   `test_queries_metrics.py`, `test_queries_why.py`, `test_queries_diff.py`,
   `test_cli_cycles.py`, `test_cli_metrics.py`, `test_cli_why.py`, `test_cli_diff.py`.
@@ -363,6 +367,12 @@ src/eizo/
   PyCapsule, same pattern as `tree-sitter-python`/`tree-sitter-typescript`.
 - `tree-sitter-rust>=0.23` — Rust parser. Same PyCapsule pattern.
 - `tree-sitter-java>=0.23` — Java parser. Same PyCapsule pattern.
+- `tree-sitter-c-sharp>=0.23` — C# parser. Same PyCapsule pattern.
+- `tree-sitter-php>=0.23` — PHP parser. Exposes `language_php` (and
+  `language_php_only`), **not** `language` like the other tree-sitter-*
+  packages — the import in `php.py` is the only place that differs from the
+  standard pattern.
+- `tree-sitter-ruby>=0.23` — Ruby parser. Same PyCapsule pattern.
 
 ## Node identity
 

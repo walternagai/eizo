@@ -347,7 +347,7 @@ graph TD
     class comp_queries_analysis_py componentClass;
     comp_queries_metrics_py["metrics<br/>component<br/>~20 symbols, 7 links"]
     class comp_queries_metrics_py componentClass;
-    comp_queries_export_py["export<br/>DOT/Mermaid/JSON/HTML export<br/>~215 symbols, 6 links"]
+    comp_queries_export_py["export<br/>DOT/Mermaid/JSON/HTML/SVG/PNG export<br/>~215 symbols, 6 links"]
     class comp_queries_export_py componentClass;
     comp_queries_diff_py["diff<br/>component<br/>~37 symbols, 5 links"]
     class comp_queries_diff_py componentClass;
@@ -635,6 +635,7 @@ eizo/
 │   ├── test_parser_rust_extended.py
 │   ├── test_parser_typescript.py
 │   ├── test_parser_typescript_extended.py
+│   ├── test_parser_fuzz.py
 │   ├── test_queries_cycles.py
 │   ├── test_queries_diff.py
 │   ├── test_queries_extended.py
