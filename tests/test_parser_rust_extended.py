@@ -115,24 +115,53 @@ enum C { X, Y }
         classes = {n.name for n in nodes if n.kind == "class"}
         assert classes == {"A", "B", "C"}
 
-    def test_call_inside_macro_invocation_is_not_captured(self, parser: RustParser) -> None:
-        """Limitação conhecida: chamadas dentro de macros (`println!`, `format!`,
-        etc.) não são capturadas.
+    def test_call_inside_macro_invocation_is_captured(self, parser: RustParser) -> None:
+        """Chamadas dentro de macros (`println!`, `format!`, `vec!`) são capturadas.
 
-        tree-sitter-rust não parseia o argumento de uma macro como expressão —
-        vira um `token_tree` de tokens crus (macros podem ter regras de
-        expansão arbitrárias, então a gramática não tenta interpretá-las).
-        `d.speak()` dentro de `println!(...)` nunca vira um `call_expression`.
+        tree-sitter-rust trata o argumento de uma macro como `token_tree`
+        opaco (macros podem ter regras de expansão arbitrárias, então a
+        gramática não tenta interpretá-las), então `d.speak()` dentro de
+        `println!(...)` nunca vira um `call_expression` no parse principal.
+        O parser re-parseia o texto do token_tree como expressões Rust e
+        coleta as chamadas de lá (B8).
         """
         source = """
 fn main() {
     let d = 1;
     println!("{}", d.speak());
+    let v = vec![foo(), bar(1)];
+    format!("x{}", baz());
 }
 """
         nodes, _ = parser.parse_file(Path("main.rs"), source)
         calls = {n.name for n in nodes if n.kind == "call"}
-        assert "speak" not in calls
+        assert {"speak", "foo", "bar", "baz"} <= calls
+
+    def test_string_literal_inside_macro_is_not_parsed_as_call(self, parser: RustParser) -> None:
+        """Conteúdo de string dentro de macro é dado literal, não código."""
+        source = """
+fn main() {
+    println!("literal () is not a call");
+}
+"""
+        nodes, _ = parser.parse_file(Path("main.rs"), source)
+        calls = {n.name for n in nodes if n.kind == "call"}
+        assert "literal" not in calls
+
+    def test_macro_template_does_not_produce_calls(self, parser: RustParser) -> None:
+        """Templates de `macro_rules!` não geram chamadas (são código de template)."""
+        source = """
+macro_rules! foo {
+    (x) => { bar(x) };
+}
+fn main() {
+    foo!(baz());
+}
+"""
+        nodes, _ = parser.parse_file(Path("main.rs"), source)
+        calls = {n.name for n in nodes if n.kind == "call"}
+        assert "bar" not in calls
+        assert "baz" in calls
 
     def test_generic_function_signature_does_not_crash(self, parser: RustParser) -> None:
         """Assinaturas genéricas (`<T>`, `where`) não devem crashar o parser."""

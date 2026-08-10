@@ -27,6 +27,11 @@ except ImportError:
 # type_spec-equivalentes: nós Rust que viram 'class' no grafo.
 _TYPE_ITEM_KINDS: frozenset[str] = frozenset({"struct_item", "trait_item", "enum_item"})
 
+# Nós do `token_tree` que NUNCA devem ser percorridos em busca de chamadas:
+# conteúdo de string/char é dado literal (nunca código) e token_trees aninhados
+# já são processados pelo próprio handler.
+_MACRO_OPAQUE_KINDS: frozenset[str] = frozenset({"string_literal", "char_literal", "raw_string_literal"})
+
 
 def _node_id(name: str, file_path: str, line: int, column: int = 0) -> str:
     """Gera um ID único para um nó.
@@ -118,6 +123,31 @@ def _resolve_use_paths(node: Any, prefix: str, source: bytes) -> list[tuple[str,
     return []
 
 
+def _call_name_and_node(func_node: Any, source: bytes) -> tuple[str, Any] | None:
+    """Extrai o nome chamado e o nó da posição do nome para um callee.
+
+    Suporta `f()` (identifier), `obj.metodo()` (field_expression) e
+    `Tipo::associada()` (scoped_identifier). Usa o identificador do
+    campo/nome chamado, não o nó `function` inteiro (que para
+    field_expression/scoped_identifier começa no operando/caminho, não no
+    nome) — senão duas chamadas encadeadas ao mesmo nome colidiriam no
+    mesmo id. Retorna None para callees não reconhecidos.
+    """
+    if func_node.type == "identifier":
+        return _get_text(source, func_node), func_node
+    if func_node.type == "field_expression":
+        field = func_node.child_by_field_name("field")
+        if field is None:
+            return None
+        return _get_text(source, field), field
+    if func_node.type == "scoped_identifier":
+        name = func_node.child_by_field_name("name")
+        if name is None:
+            return None
+        return _get_text(source, name), name
+    return None
+
+
 class RustParser(BaseParser):
     """Parser para Rust."""
 
@@ -134,6 +164,16 @@ class RustParser(BaseParser):
             msg = "tree-sitter-rust não está instalado. Execute: pip install tree-sitter-rust"
             raise RuntimeError(msg)
         self._parser = Parser(RUST_LANGUAGE)
+        # Parser dedicado aos re-parses dos argumentos de macros (B8):
+        # tree-sitter-rust trata o argumento de `foo!(...)` como um
+        # `token_tree` opaco (macros podem ter regras de expansão
+        # arbitrárias), então chamadas dentro dele nunca viram
+        # `call_expression` no parse principal. A solução é re-parsear o
+        # texto bruto do token_tree como expressões Rust e coletar as
+        # chamadas da árvore resultante, com as posições remapeadas para o
+        # arquivo original. Um Parser dedicado evita qualquer interferência
+        # de estado entre o walk principal e os re-parses.
+        self._macro_parser = Parser(RUST_LANGUAGE)
 
     def parse_file(self, file_path: Path, source: str) -> tuple[list[Node], list[Edge]]:
         """Parseia um arquivo Rust."""
@@ -196,6 +236,12 @@ class RustParser(BaseParser):
             self._handle_impl(node, source, file_path, nodes, edges, type_positions)
         elif node_type == "use_declaration":
             self._handle_use(node, source, file_path, nodes, edges, parent_id)
+        elif node_type == "macro_invocation":
+            # Chamadas dentro de macros (`println!(...)`, `vec![...]`,
+            # `foo!(bar())`) não viram `call_expression` no parse principal —
+            # o argumento é um `token_tree` opaco. Re-parseia o argumento
+            # como expressões Rust e extrai as chamadas de lá (ver B8).
+            self._handle_macro(node, source, file_path, nodes, edges, parent_id)
         elif node_type == "call_expression":
             self._handle_call(node, source, file_path, nodes, edges, parent_id)
             # Continua recursão dentro da call (ex: argumentos) para capturar
@@ -392,6 +438,139 @@ class RustParser(BaseParser):
             if parent_id:
                 edges.append(Edge(source_id=parent_id, target_id=import_node.id, kind="imports"))
 
+    def _handle_macro(
+        self,
+        node: Any,
+        source: bytes,
+        file_path: str,
+        nodes: list[Node],
+        edges: list[Edge],
+        parent_id: str | None,
+    ) -> None:
+        """Extrai chamadas feitas dentro dos argumentos de uma macro.
+
+        tree-sitter-rust trata o argumento de `foo!(...)` como um
+        `token_tree` opaco — macros podem ter regras de expansão
+        arbitrárias, então a gramática não tenta interpretá-los como
+        expressões. Consequência: `d.speak()` dentro de
+        `println!("{}", d.speak())` nunca vira um `call_expression` no
+        parse principal, e a chamada fica invisível no grafo.
+
+        Estratégia (B8): re-parsear o texto bruto do `token_tree` como
+        expressões Rust e coletar os `call_expression` da árvore resultante,
+        com as posições remapeadas para o arquivo original. O re-parse é
+        feito com um Parser dedicado (`self._macro_parser`).
+
+        Pontos de cuidado:
+
+        - **Templates de `macro_rules!` ficam de fora**: o nó deles é
+          `macro_definition`, não `macro_invocation` — este handler só roda
+          em invocações reais, então `$x`/`$(...)*` nunca são interpretados
+          como chamadas.
+        - **Strings e chars são opacos**: o conteúdo de `"foo()"` dentro de
+          um token_tree é dado literal, não código — pulado na varredura.
+        - **`token_tree` aninhados** (ex.: `format!("{}", foo())` onde o
+          argumento de `foo` é outro token_tree) são processados
+          recursivamente.
+        - **Falsos positivos são tolerados**: o re-parse de fragmentos como
+          `(x)` pode interpretar `x` como um parâmetro de macro (identificador
+          + token_tree vazio) e gerar uma chamada fantasma `x()` — o mesmo
+          tradeoff aceito para o restante do parser, que já captura chamadas
+          sintáticas sem validação semântica.
+        """
+        token_tree = next((c for c in node.children if c.type == "token_tree"), None)
+        if token_tree is None:
+            return
+
+        inner = _get_text(source, token_tree).encode("utf-8")
+        macro_tree = self._macro_parser.parse(inner)
+        self._walk_token_tree_calls(
+            macro_tree.root_node, inner, token_tree, file_path, nodes, edges, parent_id
+        )
+
+    def _walk_token_tree_calls(
+        self,
+        node: Any,
+        inner: bytes,
+        token_tree: Any,
+        file_path: str,
+        nodes: list[Node],
+        edges: list[Edge],
+        parent_id: str | None,
+    ) -> None:
+        """Varre a árvore do re-parse do token_tree coletando `call_expression`.
+
+        As posições dos nós do re-parse são relativas ao texto do token_tree;
+        o `token_tree` original guarda as posições absolutas no arquivo, então
+        um nó em (linha, coluna) no fragmento vira
+        (token_tree.start_point[0] + linha, token_tree.start_point[1] + coluna)
+        no arquivo — correto para chamadas na mesma linha (regra: o conteúdo
+        de um token_tree nunca contém quebras de linha, então linha só soma).
+        """
+        node_type = node.type
+        if node_type == "call_expression":
+            self._handle_call_absolute(
+                node, inner, token_tree, file_path, nodes, edges, parent_id
+            )
+            # Não retorna: continua a recursão para capturar chamadas
+            # aninhadas nos argumentos (`outer(inner())`).
+        if node_type in _MACRO_OPAQUE_KINDS:
+            # Conteúdo de string/char é dado literal, nunca código.
+            return
+        for child in node.children:
+            self._walk_token_tree_calls(
+                child, inner, token_tree, file_path, nodes, edges, parent_id
+            )
+
+    def _handle_call_absolute(
+        self,
+        node: Any,
+        inner: bytes,
+        token_tree: Any,
+        file_path: str,
+        nodes: list[Node],
+        edges: list[Edge],
+        parent_id: str | None,
+    ) -> None:
+        """Cria o nó 'call' de uma chamada achada no re-parse do token_tree.
+
+        Remapeia a posição relativa do nó do fragmento para a posição
+        absoluta no arquivo original usando o offset do `token_tree`
+        (ver `_walk_token_tree_calls`). O node id gerado com `_node_id`
+        (linha + coluna absolutas) é idêntico ao que o parse principal
+        produziria se enxergasse a chamada — evita ids duplicados se
+        tree-sitter um dia passar a expor essas chamadas.
+        """
+        func_node = node.child_by_field_name("function")
+        if func_node is None:
+            return
+
+        resolved = _call_name_and_node(func_node, inner)
+        if resolved is None:
+            return
+        _, name_node = resolved
+
+        call_line = token_tree.start_point[0] + 1 + name_node.start_point[0]
+        call_col = token_tree.start_point[1] + name_node.start_point[1]
+        call_name = _get_text(inner, name_node)
+        call_node = Node(
+            id=_node_id(f"call:{call_name}", file_path, call_line, call_col),
+            name=call_name,
+            kind="call",
+            file_path=file_path,
+            language="rust",
+            line_start=call_line,
+        )
+        nodes.append(call_node)
+
+        if parent_id:
+            edges.append(Edge(
+                source_id=parent_id,
+                target_id=call_node.id,
+                kind="calls",
+                metadata={"call_name": call_name},
+            ))
+
     def _handle_call(
         self,
         node: Any,
@@ -406,29 +585,10 @@ class RustParser(BaseParser):
         if func_node is None:
             return
 
-        # Posição correta para chamadas encadeadas ("x.f().f()"): usa o
-        # identificador do campo/nome chamado, não o nó `function` inteiro
-        # (que para "field_expression"/"scoped_identifier" começa no
-        # operando/caminho, não no nome) — senão duas chamadas encadeadas ao
-        # mesmo nome colidiriam no mesmo id (mesma correção aplicada aos
-        # parsers Python, TypeScript e Go).
-        if func_node.type == "identifier":
-            call_name = _get_text(source, func_node)
-            name_node = func_node
-        elif func_node.type == "field_expression":
-            field = func_node.child_by_field_name("field")
-            if field is None:
-                return
-            call_name = _get_text(source, field)
-            name_node = field
-        elif func_node.type == "scoped_identifier":
-            name = func_node.child_by_field_name("name")
-            if name is None:
-                return
-            call_name = _get_text(source, name)
-            name_node = name
-        else:
+        resolved = _call_name_and_node(func_node, source)
+        if resolved is None:
             return
+        call_name, name_node = resolved
 
         call_line = name_node.start_point[0] + 1
         call_col = name_node.start_point[1]
