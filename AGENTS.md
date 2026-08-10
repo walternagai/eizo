@@ -32,7 +32,8 @@ documentada em `docs/api.md`:
   `find_dependency_path`, `analyze_impact`, `find_dead_code`, `find_hotspots`,
   `find_import_cycles`, `compute_symbol_metrics`, `diff_against_ref`,
   `diff_between_refs`, `export_dot`, `export_mermaid`, `export_json`,
-  `export_html`) e `eizo.mcp.server.create_server`/`serve_mcp`.
+  `export_html`, `export_svg`, `export_png`, `export_architecture_mermaid`)
+  e `eizo.mcp.server.create_server`/`serve_mcp`.
 - **CLI estável por contrato de CLI**: `eizo.cli` é estável quanto a
   comandos/opções (remover/renomear comando segue o mesmo deprecation cycle),
   não quanto a imports Python.
@@ -185,7 +186,8 @@ src/eizo/
 │   ├── cycles.py   # find_import_cycles() — Tarjan SCC over the file-level import graph
 │   ├── metrics.py  # compute_symbol_metrics() — fan-in/fan-out/LOC
 │   ├── diff.py     # diff_against_ref() — symbol-level diff vs a git ref
-│   └── export.py   # export_dot(), export_mermaid(), export_json()
+│   └── export.py   # export_dot(), export_mermaid(), export_json(), export_html(),
+│                    #   export_svg(), export_png() (via graphviz), export_architecture_mermaid()
 ├── mcp/
 │   └── server.py   # FastMCP server (8 tools)
 ```

@@ -45,7 +45,7 @@ Re-exports de `eizo.graph`, `eizo.indexer` e `eizo.queries`:
 | `find_import_cycles` | function | `eizo.queries.cycles` |
 | `compute_symbol_metrics` | function | `eizo.queries.metrics` |
 | `diff_against_ref`, `diff_between_refs` | function | `eizo.queries.diff` |
-| `export_dot`, `export_mermaid`, `export_json`, `export_html`, `export_architecture_mermaid` | function | `eizo.queries.export` |
+| `export_dot`, `export_mermaid`, `export_json`, `export_html`, `export_svg`, `export_png`, `export_architecture_mermaid` | function | `eizo.queries.export` |
 | `__version__` | str | — |
 
 ## `eizo.graph`
@@ -100,8 +100,14 @@ export_dot(store, kind=None, language=None, limit=None, edge_kinds=None) -> str
 export_mermaid(store, kind=None, language=None, limit=None, edge_kinds=None, diagram_type="flowchart") -> str
 export_json(store, kind=None, language=None, limit=None, edge_kinds=None) -> str
 export_html(store, kind=None, language=None, limit=None, edge_kinds=None) -> str
+export_svg(store, kind=None, language=None, limit=None, edge_kinds=None) -> bytes
+export_png(store, kind=None, language=None, limit=None, edge_kinds=None) -> bytes
 export_architecture_mermaid(store) -> str
 ```
+
+> `export_svg`/`export_png` renderizam via binário `dot` (graphviz) e
+> levantam `RuntimeError` se ele não estiver instalado. Graphviz é
+> dependência opcional de sistema — ver README, seção Requisitos.
 
 ## `eizo.mcp.server`
 

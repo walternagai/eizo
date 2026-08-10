@@ -1,5 +1,9 @@
 # Eizō (映像) — Codebase Knowledge Graph CLI
 
+[![CI](https://img.shields.io/github/actions/workflow/status/ninja-apps/eizo/ci.yml?branch=main&label=CI&logo=github)](https://github.com/ninja-apps/eizo/actions)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 映像 — "imagem/reflexão". Reflete a estrutura do código como um grafo de conhecimento.
 
 ## Visão Geral
@@ -23,6 +27,15 @@
 | MCP | `mcp` Python SDK |
 | Testes | pytest + pytest-cov |
 | Lint | Ruff + mypy |
+
+## Requisitos
+
+- **Python 3.10+**
+- **Graphviz (opcional)**: necessário apenas para `eizo export svg` e
+  `eizo export png` — é binário de sistema, não dependência Python:
+  - Debian/Ubuntu: `apt install graphviz`
+  - macOS: `brew install graphviz`
+  - Windows: `choco install graphviz` (ou instalador do site oficial)
 
 ## Instalação
 
@@ -250,9 +263,17 @@ eizo export json --language python --limit 50 -o graph.json
 
 # Diagrama de classes Mermaid
 eizo export mermaid --diagram-type classDiagram
+
+# Renderiza direto para SVG ou PNG (requer graphviz instalado)
+eizo export svg -o graph.svg
+eizo export png -o graph.png
 ```
 
 Filtros disponíveis: `--kind`, `--language`, `--limit`, `--edge-kind` (múltiplo).
+
+> **SVG/PNG** usam o binário `dot` do graphviz (dependência opcional de
+> sistema — ver [Requisitos](#requisitos)). Sem `-o`, o arquivo é escrito
+> como `graph.svg`/`graph.png` no diretório atual.
 
 ### Visualizar em 3D
 
@@ -474,7 +495,7 @@ eizo status
 | `eizo cycles` | Detecta ciclos de import entre arquivos |
 | `eizo hotspots` | Símbolos mais referenciados |
 | `eizo metrics <symbol>` | Fan-in, fan-out e LOC de um símbolo |
-| `eizo export dot\|mermaid\|json\|html` | Exporta grafo para visualização |
+| `eizo export dot\|mermaid\|json\|html\|svg\|png` | Exporta grafo para visualização |
 | `eizo architecture` | Gera diagrama de arquitetura em Mermaid |
 | `eizo mcp` | Servidor MCP |
 | `eizo status` | Estatísticas do grafo |
@@ -575,7 +596,7 @@ eizo/
 │   │   ├── cycles.py        # Ciclos de import (Tarjan SCC)
 │   │   ├── metrics.py       # Fan-in, fan-out e LOC
 │   │   ├── diff.py          # Diff de símbolos contra ref git (1 ou 2 refs)
-│   │   └── export.py        # Export DOT/Mermaid/JSON/HTML + arquitetura
+│   │   └── export.py        # Export DOT/Mermaid/JSON/HTML/SVG/PNG + arquitetura
 │   ├── static/              # Assets do HTML export
 │   │   └── vendor/          # vis-network, etc.
 │   └── mcp/
@@ -633,12 +654,10 @@ eizo/
 
 ## Roadmap
 
-Caminho até a versão 1.0.0:
-
 - **Fase 1 (Sprint 8) — Robustez**: captura de chamadas dentro de macros Rust, fuzzing dos parsers, benchmark com 10k+ arquivos
 - **Fase 2 (Sprint 9) — API pública estável**: congelamento da API, docs de API, diff entre branches
 - **Fase 3 (Sprint 10) — Mais linguagens**: parsers C#/PHP/Ruby, suporte nativo a Windows
-- **Fase 4 (Sprint 11) — Release 1.0.0**: export SVG/PNG, changelog consolidado, tag final
+- **Fase 4 (Sprint 11) — Release 1.0.0**: export SVG/PNG, changelog consolidado, tag final ✅
 
 ## API pública
 

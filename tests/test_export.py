@@ -1,13 +1,15 @@
-"""Testes para exportação do grafo (DOT, Mermaid, JSON).
+"""Testes para exportação do grafo (DOT, Mermaid, JSON, SVG, PNG).
 
 Cobre:
-- queries/export.py: export_dot(), export_mermaid(), export_json()
-- CLI: eizo export dot|mermaid|json
+- queries/export.py: export_dot(), export_mermaid(), export_json(),
+  export_svg(), export_png()
+- CLI: eizo export dot|mermaid|json|svg|png
 """
 
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -21,6 +23,15 @@ from eizo.queries.export import (
     export_dot,
     export_json,
     export_mermaid,
+    export_png,
+    export_svg,
+)
+
+# ─── Fixtures ──────────────────────────────────────────────────
+
+requires_dot = pytest.mark.skipif(
+    shutil.which("dot") is None,
+    reason="graphviz (dot) não instalado — instale com: apt install graphviz",
 )
 
 # ─── Fixtures ──────────────────────────────────────────────────
@@ -267,6 +278,54 @@ class TestExportJson:
         assert data["edges"] == []
 
 
+# ─── export_svg / export_png (graphviz) ───────────────────────
+
+
+class TestExportSvgPng:
+    """Testa export_svg() e export_png() — pulam se `dot` não estiver instalado."""
+
+    @requires_dot
+    def test_svg_starts_with_xml_or_svg(self, export_store: GraphStore) -> None:
+        """SVG começa com <?xml ou <svg (conteúdo válido de imagem vetorial)."""
+        result = export_svg(export_store)
+        assert isinstance(result, bytes)
+        head = result[:200].decode("utf-8", errors="replace")
+        assert head.lstrip().startswith("<?xml") or head.lstrip().startswith("<svg")
+
+    @requires_dot
+    def test_svg_contains_node_labels(self, export_store: GraphStore) -> None:
+        """SVG inclui os labels dos nós do grafo."""
+        result = export_svg(export_store)
+        assert b"Animal" in result
+        assert b"Dog" in result
+
+    @requires_dot
+    def test_png_magic_bytes(self, export_store: GraphStore) -> None:
+        """PNG tem magic bytes \\x89PNG."""
+        result = export_png(export_store)
+        assert isinstance(result, bytes)
+        assert result[:8] == b"\x89PNG\r\n\x1a\n"
+
+    @requires_dot
+    def test_svg_kind_filter(self, export_store: GraphStore) -> None:
+        """Filtro de kind limita nós no SVG."""
+        result = export_svg(export_store, kind="class")
+        assert b"Animal" in result
+        assert b"main" not in result
+
+    def test_svg_without_dot_raises(self, export_store: GraphStore, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Sem `dot` no PATH, export_svg levanta RuntimeError com instrução clara."""
+        monkeypatch.setattr("eizo.queries.export.shutil.which", lambda _name: None)
+        with pytest.raises(RuntimeError, match="graphviz"):
+            export_svg(export_store)
+
+    def test_png_without_dot_raises(self, export_store: GraphStore, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Sem `dot` no PATH, export_png levanta RuntimeError com instrução clara."""
+        monkeypatch.setattr("eizo.queries.export.shutil.which", lambda _name: None)
+        with pytest.raises(RuntimeError, match="graphviz"):
+            export_png(export_store)
+
+
 # ─── CLI: eizo export ──────────────────────────────────────────
 
 
@@ -385,6 +444,62 @@ class TestCliExport:
         runner = CliRunner()
         result = runner.invoke(main, ["export", "invalid", "--repo", str(tmp_path)])
         assert result.exit_code != 0
+
+    @requires_dot
+    def test_export_svg_to_file(self, tmp_path: Path) -> None:
+        """export svg -o escreve arquivo SVG válido."""
+        from eizo.indexer import index_repository
+
+        repo = Path(tmp_path)
+        (repo / "test.py").write_text("def foo(): pass\n")
+        store = GraphStore(repo)
+        index_repository(repo, store, force=True)
+
+        output_file = tmp_path / "graph.svg"
+        runner = CliRunner()
+        result = runner.invoke(
+            main, ["export", "svg", "-o", str(output_file), "--repo", str(repo)]
+        )
+        assert result.exit_code == 0
+        assert "exportado" in result.output
+        assert output_file.exists()
+        head = output_file.read_bytes()[:200].decode("utf-8", errors="replace")
+        assert head.lstrip().startswith("<?xml") or head.lstrip().startswith("<svg")
+
+    @requires_dot
+    def test_export_png_to_file(self, tmp_path: Path) -> None:
+        """export png -o escreve arquivo PNG com magic bytes."""
+        from eizo.indexer import index_repository
+
+        repo = Path(tmp_path)
+        (repo / "test.py").write_text("def foo(): pass\n")
+        store = GraphStore(repo)
+        index_repository(repo, store, force=True)
+
+        output_file = tmp_path / "graph.png"
+        runner = CliRunner()
+        result = runner.invoke(
+            main, ["export", "png", "-o", str(output_file), "--repo", str(repo)]
+        )
+        assert result.exit_code == 0
+        assert "exportado" in result.output
+        assert output_file.exists()
+        assert output_file.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+    def test_export_svg_without_dot_errors(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """export svg sem `dot` no PATH falha com exit code != 0 e mensagem clara."""
+        from eizo.indexer import index_repository
+
+        repo = Path(tmp_path)
+        (repo / "test.py").write_text("def foo(): pass\n")
+        store = GraphStore(repo)
+        index_repository(repo, store, force=True)
+
+        monkeypatch.setattr("eizo.queries.export.shutil.which", lambda _name: None)
+        runner = CliRunner()
+        result = runner.invoke(main, ["export", "svg", "--repo", str(repo)])
+        assert result.exit_code != 0
+        assert "graphviz" in result.output
 
 
 # ─── export_architecture_mermaid ───────────────────────────────

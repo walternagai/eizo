@@ -17,6 +17,8 @@ from eizo.queries.export import (
     export_html,
     export_json,
     export_mermaid,
+    export_png,
+    export_svg,
 )
 from eizo.queries.impact import analyze_impact
 from eizo.queries.metrics import compute_symbol_metrics
@@ -34,6 +36,8 @@ __all__ = [
     "export_html",
     "export_json",
     "export_mermaid",
+    "export_png",
+    "export_svg",
     "find_dead_code",
     "find_dependency_path",
     "find_hotspots",

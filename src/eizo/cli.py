@@ -15,7 +15,7 @@ Comandos:
   eizo cycles   Detecta ciclos de import entre arquivos
   eizo hotspots Mostra símbolos mais referenciados
   eizo metrics  Mostra fan-in, fan-out e LOC de um símbolo
-  eizo export   Exporta grafo em DOT/Mermaid/JSON/HTML (3D)
+  eizo export   Exporta grafo em DOT/Mermaid/JSON/HTML (3D)/SVG/PNG
 """
 
 from __future__ import annotations
@@ -50,6 +50,8 @@ from eizo.queries.export import (
     export_html,
     export_json,
     export_mermaid,
+    export_png,
+    export_svg,
 )
 from eizo.queries.impact import analyze_impact
 from eizo.queries.metrics import compute_symbol_metrics
@@ -1286,10 +1288,12 @@ def diff(ctx: click.Context, ref: str, repo_path: str) -> None:
         "Exemplos:\n"
         "  eizo export dot -o graph.dot\n"
         "  eizo export mermaid --kind class --edge-kind inherits\n"
-        "  eizo export json --language python --limit 50"
+        "  eizo export json --language python --limit 50\n"
+        "  eizo export svg -o graph.svg\n"
+        "  eizo export png -o graph.png"
     ),
 )
-@click.argument("format", type=click.Choice(["dot", "mermaid", "json", "html"]))
+@click.argument("format", type=click.Choice(["dot", "mermaid", "json", "html", "svg", "png"]))
 @click.option("--kind", help="Filtrar nós por tipo (function, class, method)")
 @click.option("--language", help="Filtrar nós por linguagem (python, typescript)")
 @click.option("--limit", default=None, type=click.IntRange(min=1), help="Máximo de nós")
@@ -1319,14 +1323,14 @@ def export(
     output: str | None,
     repo_path: str,
 ) -> None:
-    """Exporta o grafo em formato DOT, Mermaid, JSON ou HTML (tridimensional)."""
+    """Exporta o grafo em formato DOT, Mermaid, JSON, HTML (3D), SVG ou PNG."""
     cfg = _merge_config(ctx, command_values={"repo_path": repo_path})
     repo_path = cfg.get("repo_path", repo_path)
     store = _open_store(repo_path)
     eps = frozenset(edge_kinds) if edge_kinds else None
 
     if format == "dot":
-        result = export_dot(store, kind=kind, language=language, limit=limit, edge_kinds=eps)
+        result: str | bytes = export_dot(store, kind=kind, language=language, limit=limit, edge_kinds=eps)
     elif format == "mermaid":
         result = export_mermaid(
             store, kind=kind, language=language, limit=limit,
@@ -1334,12 +1338,30 @@ def export(
         )
     elif format == "html":
         result = export_html(store, kind=kind, language=language, limit=limit, edge_kinds=eps)
+    elif format == "svg":
+        try:
+            result = export_svg(store, kind=kind, language=language, limit=limit, edge_kinds=eps)
+        except RuntimeError as exc:
+            raise click.ClickException(str(exc)) from exc
+    elif format == "png":
+        try:
+            result = export_png(store, kind=kind, language=language, limit=limit, edge_kinds=eps)
+        except RuntimeError as exc:
+            raise click.ClickException(str(exc)) from exc
     else:  # json
         result = export_json(store, kind=kind, language=language, limit=limit, edge_kinds=eps)
 
     if output:
-        Path(output).write_text(result, encoding="utf-8")
+        if isinstance(result, bytes):
+            Path(output).write_bytes(result)
+        else:
+            Path(output).write_text(result, encoding="utf-8")
         console.print(f"[green]✓ Grafo exportado para {output}[/green]")
+    elif isinstance(result, bytes):
+        # Saída binária (SVG/PNG) sem -o: escreve no diretório atual com nome padrão
+        default_name = f"graph.{format}"
+        Path(default_name).write_bytes(result)
+        console.print(f"[green]✓ Grafo exportado para {default_name}[/green]")
     else:
         # Saída direta na stdout (sem rich formatting)
         click.echo(result)

@@ -2,6 +2,7 @@
 
 Suporta:
 - DOT (Graphviz): para renderização com `dot -Tpng graph.dot -o graph.png`
+- SVG/PNG (Graphviz): renderização direta via binário `dot` (graphviz)
 - Mermaid: para renderização em GitHub, GitLab, Notion, etc.
 - JSON: para importação em ferramentas de visualização
 - HTML: grafo 3D interativo e navegável no browser (offline, self-contained)
@@ -12,6 +13,8 @@ Filtros opcionais: por kind, por linguagem, por arquivo (glob), limite de nós.
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 from importlib import resources
 from pathlib import Path
 from typing import Any
@@ -45,18 +48,28 @@ def _fetch_nodes(
 
 
 def _fetch_edges_for_nodes(store: GraphStore, node_ids: set[str]) -> list[Edge]:
-    """Busca arestas onde ambos source e target estão no conjunto de nós."""
+    """Busca arestas onde ambos source e target estão no conjunto de nós.
+
+    O IN é quebrado em batches de 500 ids: SQLite tem limite de variáveis
+    (SQLITE_MAX_VARIABLE_NUMBER, tipicamente 999) e grafos grandes
+    (10k+ nós) estouram o limite ou degradam para um scan lento.
+    """
     if not node_ids:
         return []
-    placeholders = ",".join("?" * len(node_ids))
-    sql = f"""
-        SELECT * FROM edges
-        WHERE source_id IN ({placeholders})
-          AND target_id IN ({placeholders})
-    """
-    params = list(node_ids) + list(node_ids)
-    rows = store.conn.execute(sql, params).fetchall()
-    return [store._row_to_edge(r) for r in rows]
+    ids = list(node_ids)
+    edges: list[Edge] = []
+    batch_size = 500
+    for start in range(0, len(ids), batch_size):
+        batch = ids[start : start + batch_size]
+        placeholders = ",".join("?" * len(batch))
+        sql = f"""
+            SELECT * FROM edges
+            WHERE source_id IN ({placeholders})
+              AND target_id IN ({placeholders})
+        """
+        rows = store.conn.execute(sql, batch + batch).fetchall()
+        edges.extend(store._row_to_edge(r) for r in rows)
+    return edges
 
 
 def _sanitize_dot_id(node_id: str) -> str:
@@ -130,6 +143,94 @@ def export_dot(
     lines.append("}")
 
     return "\n".join(lines)
+
+
+def _render_dot(dot_source: str, fmt: str) -> bytes:
+    """Renderiza DOT via binário `dot` (graphviz) para SVG ou PNG.
+
+    O DOT é passado via stdin e o resultado é capturado da stdout — sem
+    arquivos temporários. Se o binário `dot` não estiver disponível, levanta
+    RuntimeError com instrução de instalação.
+
+    Args:
+        dot_source: String DOT produzida por export_dot().
+        fmt: Formato de saída do graphviz ("svg" ou "png").
+
+    Returns:
+        Bytes do arquivo renderizado (SVG ou PNG).
+    """
+    dot_bin = shutil.which("dot")
+    if dot_bin is None:
+        raise RuntimeError(
+            "graphviz (dot) não encontrado — instale com: apt install graphviz "
+            "(ou brew install graphviz no macOS, choco install graphviz no Windows)"
+        )
+    result: subprocess.CompletedProcess[bytes] = subprocess.run(
+        [dot_bin, f"-T{fmt}"],
+        input=dot_source.encode("utf-8"),
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        msg = result.stderr.strip() or f"dot -T{fmt} falhou"
+        raise RuntimeError(msg)
+    return result.stdout
+
+
+def export_svg(
+    store: GraphStore,
+    kind: str | None = None,
+    language: str | None = None,
+    limit: int | None = None,
+    edge_kinds: frozenset[str] | None = None,
+) -> bytes:
+    """Exporta o grafo para SVG renderizado via graphviz (`dot -Tsvg`).
+
+    Requer o binário `dot` instalado no sistema (graphviz). Não é dependência
+    Python — ver README, seção Requisitos.
+
+    Args:
+        store: GraphStore com o grafo.
+        kind: Filtrar nós por tipo (function, class, method).
+        language: Filtrar nós por linguagem.
+        limit: Máximo de nós.
+        edge_kinds: Filtrar arestas por tipo (calls, imports, inherits, contains).
+
+    Returns:
+        Bytes do SVG renderizado.
+
+    Raises:
+        RuntimeError: se o binário `dot` não estiver disponível ou falhar.
+    """
+    return _render_dot(export_dot(store, kind=kind, language=language, limit=limit, edge_kinds=edge_kinds), "svg")
+
+
+def export_png(
+    store: GraphStore,
+    kind: str | None = None,
+    language: str | None = None,
+    limit: int | None = None,
+    edge_kinds: frozenset[str] | None = None,
+) -> bytes:
+    """Exporta o grafo para PNG renderizado via graphviz (`dot -Tpng`).
+
+    Requer o binário `dot` instalado no sistema (graphviz). Não é dependência
+    Python — ver README, seção Requisitos.
+
+    Args:
+        store: GraphStore com o grafo.
+        kind: Filtrar nós por tipo (function, class, method).
+        language: Filtrar nós por linguagem.
+        limit: Máximo de nós.
+        edge_kinds: Filtrar arestas por tipo (calls, imports, inherits, contains).
+
+    Returns:
+        Bytes do PNG renderizado.
+
+    Raises:
+        RuntimeError: se o binário `dot` não estiver disponível ou falhar.
+    """
+    return _render_dot(export_dot(store, kind=kind, language=language, limit=limit, edge_kinds=edge_kinds), "png")
 
 
 def export_mermaid(
@@ -574,7 +675,7 @@ def _component_description(file_path: str) -> str:
         "/queries/trace.py": "call graph trace",
         "/queries/impact.py": "impact analysis",
         "/queries/analysis.py": "dead code & hotspots",
-        "/queries/export.py": "DOT/Mermaid/JSON/HTML export",
+        "/queries/export.py": "DOT/Mermaid/JSON/HTML/SVG/PNG export",
         "/parser/python.py": "Python parser",
         "/parser/typescript.py": "TypeScript parser",
         "/parser/base.py": "parser base",

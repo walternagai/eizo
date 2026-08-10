@@ -26,6 +26,8 @@ from eizo.queries import (
     export_html,
     export_json,
     export_mermaid,
+    export_png,
+    export_svg,
     find_dead_code,
     find_dependency_path,
     find_hotspots,
@@ -35,7 +37,7 @@ from eizo.queries import (
     trace_call_path,
 )
 
-__version__ = "0.3.0"
+__version__ = "1.0.0"
 
 __all__ = [
     "DEFINITION_KINDS",
@@ -53,6 +55,8 @@ __all__ = [
     "export_html",
     "export_json",
     "export_mermaid",
+    "export_png",
+    "export_svg",
     "find_dead_code",
     "find_dependency_path",
     "find_hotspots",
