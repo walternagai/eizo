@@ -286,7 +286,7 @@ graph TD
   classDef componentClass fill:#e1f5e1,stroke:#333,stroke-width:1px;
   classDef statsClass fill:#fff4cc,stroke:#333,stroke-width:1px;
   subgraph entrypoints["Entrypoints (CLI / MCP)"]
-    comp_cli_py["cli<br/>CLI Click<br/>~316 symbols, 18 links"]
+    comp_cli_py["cli<br/>CLI Click<br/>~559 symbols, 28 links"]
     class comp_cli_py componentClass;
     comp_mcp_server_py["server<br/>MCP server<br/>~59 symbols, 7 links"]
     class comp_mcp_server_py componentClass;
@@ -295,79 +295,101 @@ graph TD
   end
   class comp_cli_py layerClass;
   subgraph queries["Query Layer"]
-    comp_queries_analysis_py["analysis<br/>dead code & hotspots<br/>~28 symbols, 7 links"]
+    comp_queries_analysis_py["analysis<br/>dead code & hotspots<br/>~28 symbols, 9 links"]
     class comp_queries_analysis_py componentClass;
-    comp_queries_export_py["export<br/>DOT/Mermaid/JSON/HTML export<br/>~131 symbols, 6 links"]
+    comp_queries_metrics_py["metrics<br/>component<br/>~20 symbols, 7 links"]
+    class comp_queries_metrics_py componentClass;
+    comp_queries_export_py["export<br/>DOT/Mermaid/JSON/HTML export<br/>~215 symbols, 6 links"]
     class comp_queries_export_py componentClass;
+    comp_queries_diff_py["diff<br/>component<br/>~37 symbols, 5 links"]
+    class comp_queries_diff_py componentClass;
     comp_queries_trace_py["trace<br/>call graph trace<br/>~27 symbols, 5 links"]
     class comp_queries_trace_py componentClass;
     comp_queries_search_py["search<br/>symbol search<br/>~23 symbols, 5 links"]
     class comp_queries_search_py componentClass;
-    comp_queries_impact_py["impact<br/>impact analysis<br/>~17 symbols, 5 links"]
-    class comp_queries_impact_py componentClass;
   end
   class comp_queries_analysis_py layerClass;
   subgraph graph["Graph Layer"]
-    comp_graph_store_py["store<br/>SQLite CRUD<br/>~181 symbols, 20 links"]
+    comp_graph_store_py["store<br/>SQLite CRUD<br/>~202 symbols, 26 links"]
     class comp_graph_store_py componentClass;
-    comp_graph_models_py["models<br/>Node/Edge models<br/>~15 symbols, 12 links"]
+    comp_graph_models_py["models<br/>Node/Edge models<br/>~15 symbols, 20 links"]
     class comp_graph_models_py componentClass;
-    comp_graph_schema_py["schema<br/>DB schema<br/>~31 symbols, 2 links"]
+    comp_graph_schema_py["schema<br/>DB schema<br/>~44 symbols, 4 links"]
     class comp_graph_schema_py componentClass;
   end
   class comp_graph_store_py layerClass;
   subgraph parsers["Language Parsers"]
-    comp_parser_base_py["base<br/>parser base<br/>~12 symbols, 7 links"]
+    comp_parser_base_py["base<br/>parser base<br/>~12 symbols, 14 links"]
     class comp_parser_base_py componentClass;
+    comp_parser_rust_py["rust<br/>component<br/>~124 symbols, 6 links"]
+    class comp_parser_rust_py componentClass;
+    comp_parser_go_py["go<br/>component<br/>~122 symbols, 6 links"]
+    class comp_parser_go_py componentClass;
     comp_parser_typescript_py["typescript<br/>TypeScript parser<br/>~120 symbols, 6 links"]
     class comp_parser_typescript_py componentClass;
-    comp_parser_python_py["python<br/>Python parser<br/>~109 symbols, 6 links"]
+    comp_parser_python_py["python<br/>Python parser<br/>~110 symbols, 6 links"]
     class comp_parser_python_py componentClass;
+    comp_parser_java_py["java<br/>component<br/>~110 symbols, 6 links"]
+    class comp_parser_java_py componentClass;
   end
   class comp_parser_base_py layerClass;
   subgraph indexer["Indexer"]
-    comp_indexer_py["indexer<br/>orchestrates indexing<br/>~99 symbols, 10 links"]
+    comp_indexer_py["indexer<br/>orchestrates indexing<br/>~167 symbols, 18 links"]
     class comp_indexer_py componentClass;
   end
   class comp_indexer_py layerClass;
   comp___main___py -->|"calls, imports"| comp_cli_py
+  comp_cli_py -->|"calls, imports"| comp_graph_schema_py
   comp_cli_py -->|"calls, imports"| comp_graph_store_py
   comp_cli_py -->|"calls, imports"| comp_indexer_py
   comp_cli_py -->|"calls, imports"| comp_mcp_server_py
   comp_cli_py -->|"calls, imports"| comp_queries_analysis_py
+  comp_cli_py -->|"calls, imports"| comp_queries_diff_py
   comp_cli_py -->|"calls, imports"| comp_queries_export_py
-  comp_cli_py -->|"calls, imports"| comp_queries_impact_py
+  comp_cli_py -->|"calls, imports"| comp_queries_metrics_py
   comp_cli_py -->|"calls, imports"| comp_queries_search_py
   comp_cli_py -->|"calls, imports"| comp_queries_trace_py
   comp_graph_store_py -->|"calls, imports"| comp_graph_models_py
   comp_graph_store_py -->|"calls, imports"| comp_graph_schema_py
   comp_indexer_py -->|"calls, imports"| comp_graph_store_py
   comp_indexer_py -->|"calls, imports"| comp_parser_base_py
+  comp_indexer_py -->|"calls, imports"| comp_parser_go_py
+  comp_indexer_py -->|"calls, imports"| comp_parser_java_py
   comp_indexer_py -->|"calls, imports"| comp_parser_python_py
+  comp_indexer_py -->|"calls, imports"| comp_parser_rust_py
   comp_indexer_py -->|"calls, imports"| comp_parser_typescript_py
   comp_mcp_server_py -->|"calls, imports"| comp_graph_store_py
   comp_mcp_server_py -->|"calls, imports"| comp_queries_analysis_py
   comp_mcp_server_py -->|"calls"| comp_queries_export_py
   comp_parser_base_py -->|"imports"| comp_graph_models_py
+  comp_parser_go_py -->|"calls, imports"| comp_graph_models_py
+  comp_parser_go_py -->|"imports, inherits"| comp_parser_base_py
+  comp_parser_java_py -->|"calls, imports"| comp_graph_models_py
+  comp_parser_java_py -->|"imports, inherits"| comp_parser_base_py
   comp_parser_python_py -->|"calls, imports"| comp_graph_models_py
   comp_parser_python_py -->|"imports, inherits"| comp_parser_base_py
+  comp_parser_rust_py -->|"calls, imports"| comp_graph_models_py
+  comp_parser_rust_py -->|"imports, inherits"| comp_parser_base_py
   comp_parser_typescript_py -->|"calls, imports"| comp_graph_models_py
   comp_parser_typescript_py -->|"imports, inherits"| comp_parser_base_py
   comp_queries_analysis_py -->|"imports"| comp_graph_models_py
   comp_queries_analysis_py -->|"calls, imports"| comp_graph_store_py
+  comp_queries_diff_py -->|"calls, imports"| comp_indexer_py
+  comp_queries_diff_py -->|"calls"| comp_parser_base_py
   comp_queries_export_py -->|"imports"| comp_graph_models_py
   comp_queries_export_py -->|"calls, imports"| comp_graph_store_py
-  comp_queries_impact_py -->|"imports"| comp_graph_models_py
-  comp_queries_impact_py -->|"calls, imports"| comp_graph_store_py
+  comp_queries_metrics_py -->|"imports"| comp_graph_models_py
+  comp_queries_metrics_py -->|"calls, imports"| comp_graph_store_py
+  comp_queries_metrics_py -->|"calls, imports"| comp_queries_analysis_py
   comp_queries_search_py -->|"imports"| comp_graph_models_py
   comp_queries_search_py -->|"calls, imports"| comp_graph_store_py
   comp_queries_trace_py -->|"imports"| comp_graph_models_py
   comp_queries_trace_py -->|"calls, imports"| comp_graph_store_py
 
   subgraph Stats["Repository Stats"]
-    total_nodes["Total nodes: 8601"]
-    total_edges["Total edges: 16260"]
-    total_files["Total files: 43"]
+    total_nodes["Total nodes: 27587"]
+    total_edges["Total edges: 27523"]
+    total_files["Total files: 64"]
     languages["Languages: typescript, python"]
   end
   class total_nodes,total_edges,total_files,languages statsClass;
@@ -499,22 +521,29 @@ make coverage     # pytest com cobertura
 ```
 eizo/
 ├── src/eizo/
-│   ├── cli.py               # Entry point Click (12 comandos)
+│   ├── cli.py               # Entry point Click (16 comandos)
 │   ├── __main__.py          # python -m eizo
 │   ├── indexer.py           # Orquestrador de indexação incremental
 │   ├── graph/
 │   │   ├── models.py        # Dataclasses Node, Edge, GraphStats
-│   │   ├── schema.py        # Schema SQLite v2 + migrações
+│   │   ├── schema.py        # Schema SQLite v3 + migrações
 │   │   └── store.py         # GraphStore CRUD, FTS5, file_index
 │   ├── parser/
 │   │   ├── base.py          # Parser base abstrato
 │   │   ├── python.py        # Parser Python (Tree-sitter)
-│   │   └── typescript.py    # Parser TS/JS (Tree-sitter)
+│   │   ├── typescript.py    # Parser TS/JS (Tree-sitter)
+│   │   ├── go.py            # Parser Go (Tree-sitter)
+│   │   ├── rust.py          # Parser Rust (Tree-sitter)
+│   │   └── java.py          # Parser Java (Tree-sitter)
 │   ├── queries/
 │   │   ├── search.py        # Busca textual e FTS5
 │   │   ├── trace.py         # Call graph
+│   │   ├── why.py           # Caminho de dependência entre símbolos
 │   │   ├── impact.py        # Análise de impacto
 │   │   ├── analysis.py      # Código morto e hotspots
+│   │   ├── cycles.py        # Ciclos de import (Tarjan SCC)
+│   │   ├── metrics.py       # Fan-in, fan-out e LOC
+│   │   ├── diff.py          # Diff de símbolos contra ref git
 │   │   └── export.py        # Export DOT/Mermaid/JSON/HTML + arquitetura
 │   ├── static/              # Assets do HTML export
 │   │   └── vendor/          # vis-network, etc.
@@ -522,30 +551,43 @@ eizo/
 │       └── server.py        # Servidor MCP (8 tools)
 ├── tests/
 │   ├── conftest.py
-│   ├── test_cli.py
-│   ├── test_main.py
-│   ├── test_models.py
-│   ├── test_schema.py
-│   ├── test_store.py
-│   ├── test_store_extended.py
-│   ├── test_parser_base.py
-│   ├── test_parser_python.py
-│   ├── test_parser_python_extended.py
-│   ├── test_parser_typescript.py
-│   ├── test_parser_typescript_extended.py
-│   ├── test_indexer.py
-│   ├── test_indexer_extended.py
-│   ├── test_incremental.py
-│   ├── test_queries_search.py
-│   ├── test_queries_trace.py
-│   ├── test_queries_impact.py
-│   ├── test_queries_extended.py
 │   ├── test_analysis.py
+│   ├── test_cli.py
+│   ├── test_cli_cycles.py
+│   ├── test_cli_diff.py
+│   ├── test_cli_metrics.py
+│   ├── test_cli_why.py
+│   ├── test_coverage_gaps.py
 │   ├── test_export.py
 │   ├── test_export_html.py
+│   ├── test_incremental.py
+│   ├── test_indexer.py
+│   ├── test_indexer_extended.py
+│   ├── test_main.py
 │   ├── test_mcp_server.py
-│   ├── test_coverage_gaps.py
-│   └── test_schema.py
+│   ├── test_models.py
+│   ├── test_parser_base.py
+│   ├── test_parser_go.py
+│   ├── test_parser_go_extended.py
+│   ├── test_parser_java.py
+│   ├── test_parser_java_extended.py
+│   ├── test_parser_python.py
+│   ├── test_parser_python_extended.py
+│   ├── test_parser_rust.py
+│   ├── test_parser_rust_extended.py
+│   ├── test_parser_typescript.py
+│   ├── test_parser_typescript_extended.py
+│   ├── test_queries_cycles.py
+│   ├── test_queries_diff.py
+│   ├── test_queries_extended.py
+│   ├── test_queries_impact.py
+│   ├── test_queries_metrics.py
+│   ├── test_queries_search.py
+│   ├── test_queries_trace.py
+│   ├── test_queries_why.py
+│   ├── test_schema.py
+│   ├── test_store.py
+│   └── test_store_extended.py
 ├── pyproject.toml
 ├── Makefile
 ├── AGENTS.md

@@ -158,8 +158,8 @@ src/eizo/
 │   ├── metrics.py  # compute_symbol_metrics() — fan-in/fan-out/LOC
 │   ├── diff.py     # diff_against_ref() — symbol-level diff vs a git ref
 │   └── export.py   # export_dot(), export_mermaid(), export_json()
-    └── mcp/
-    │       └── server.py   # FastMCP server (8 tools)
+├── mcp/
+│   └── server.py   # FastMCP server (8 tools)
 ```
 
 ## Tree-sitter quirks
@@ -212,7 +212,7 @@ src/eizo/
 
 - DB stored at `{repo}/.eizo/graph.db`. WAL mode + foreign keys ON.
 - Schema v3: `nodes`, `edges`, `file_index` (incremental), `nodes_fts` (FTS5).
-- Node IDs: SHA-256(`{file_path}:{name}:{line}`)[:16].
+- Node IDs: SHA-256(`{file_path}:{name}:{line}:{column}`)[:16].
 - `file_index` tracks content_hash + mtime per file for incremental indexing.
 - `nodes_fts` is a standard FTS5 table (name, docstring, code_snippet) synced
   on every upsert/delete.
