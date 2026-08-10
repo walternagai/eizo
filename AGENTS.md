@@ -183,13 +183,20 @@ src/eizo/
   problem as Go — `rust.py` reuses the same pre-scan-positions trick.
   `impl Trait for Type` becomes an `inherits` edge (closest Rust analogue to
   subclassing); `impl Type` alone doesn't.
-- **Known limitation**: `rust.py` can't see calls made *inside* a macro
-  invocation (`println!(...)`, `format!(...)`, `vec![...]`, etc.).
-  tree-sitter-rust doesn't parse a macro's arguments as expressions — it's
-  an opaque `token_tree` of raw tokens, since macro expansion rules are
-  arbitrary and the grammar can't interpret them without expanding the
-  macro. `d.speak()` inside `println!("{}", d.speak())` never becomes a
-  `call_expression`, so that call is silently absent from the graph.
+- **Macro arguments are parsed via re-parse (B8)**: `rust.py` captures calls
+  made *inside* a macro invocation (`println!(...)`, `format!(...)`,
+  `vec![...]`, custom macros). tree-sitter-rust doesn't parse a macro's
+  arguments as expressions — it's an opaque `token_tree` of raw tokens, since
+  macro expansion rules are arbitrary and the grammar can't interpret them.
+  `d.speak()` inside `println!("{}", d.speak())` never becomes a
+  `call_expression` in the main parse. The parser re-parses the token_tree's
+  raw text as Rust expressions with a dedicated `Parser` and collects calls
+  from that tree, remapping positions back to the original file. Caveats:
+  `macro_rules!` *templates* are `macro_definition` nodes (not
+  `macro_invocation`), so their contents are correctly left out; string/char
+  literals inside the token_tree are treated as opaque data; re-parsing
+  fragments like `(x)` may produce phantom `x()` calls (macro metavariables
+  look like calls) — same tolerated tradeoff as the rest of the parser.
 - Java is the simplest of the four non-Python/TS parsers: methods/constructors
   are always AST-nested inside their `class`/`interface`/`enum`/`record` body
   (no Go/Rust-style out-of-band `impl`/receiver, no pre-scan needed).

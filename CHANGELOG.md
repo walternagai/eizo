@@ -7,6 +7,13 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 
 ## [Unreleased]
 
+### Adicionado
+
+- Chamadas dentro de macros Rust (`println!`, `format!`, `vec!`, macros custom) agora são capturadas — re-parse do argumento `token_tree` como expressões (B8)
+- Fuzz tests determinísticos dos parsers (seed fixa) — nenhum input malformado pode crashar o parse (B11)
+- Benchmark de indexação em escala (`benchmarks/benchmark_index.py`) com resultados documentados em `benchmarks/RESULTS.md` (B12)
+- Actions do CI atualizadas para `actions/checkout@v7` e `actions/setup-python@v7` (Node 20 deprecado) (B16)
+
 ### Corrigido
 
 - Teto de dependência `mcp<2.0`: mcp 2.0 removeu `mcp.server.fastmcp` (quebra o import) e deixou o decorator `@mcp.tool()` sem tipagem (quebra `mypy --strict` com `untyped-decorator`)
