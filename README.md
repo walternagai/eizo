@@ -594,6 +594,15 @@ eizo/
 └── README.md
 ```
 
+## Roadmap
+
+Caminho até a versão 1.0.0:
+
+- **Fase 1 (Sprint 8) — Robustez**: captura de chamadas dentro de macros Rust, fuzzing dos parsers, benchmark com 10k+ arquivos
+- **Fase 2 (Sprint 9) — API pública estável**: congelamento da API, docs de API, diff entre branches
+- **Fase 3 (Sprint 10) — Mais linguagens**: parsers C#/PHP/Ruby, suporte nativo a Windows
+- **Fase 4 (Sprint 11) — Release 1.0.0**: export SVG/PNG, changelog consolidado, tag final
+
 ## Licença
 
 MIT
