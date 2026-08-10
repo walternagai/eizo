@@ -14,9 +14,12 @@ from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn
 
 from eizo.graph.store import GraphStore
 from eizo.parser.base import BaseParser
+from eizo.parser.csharp import CSharpParser
 from eizo.parser.go import GoParser
 from eizo.parser.java import JavaParser
+from eizo.parser.php import PhpParser
 from eizo.parser.python import PythonParser
+from eizo.parser.ruby import RubyParser
 from eizo.parser.rust import RustParser
 from eizo.parser.typescript import TypeScriptParser
 
@@ -101,6 +104,24 @@ def _get_parsers() -> list[BaseParser]:
     except RuntimeError as e:
         logger.warning("Java parser não disponível: %s", e)
         console.print(f"[yellow]⚠ Java parser não disponível: {e}[/yellow]")
+    try:
+        parsers.append(CSharpParser())
+        logger.debug("C# parser inicializado")
+    except RuntimeError as e:
+        logger.warning("C# parser não disponível: %s", e)
+        console.print(f"[yellow]⚠ C# parser não disponível: {e}[/yellow]")
+    try:
+        parsers.append(PhpParser())
+        logger.debug("PHP parser inicializado")
+    except RuntimeError as e:
+        logger.warning("PHP parser não disponível: %s", e)
+        console.print(f"[yellow]⚠ PHP parser não disponível: {e}[/yellow]")
+    try:
+        parsers.append(RubyParser())
+        logger.debug("Ruby parser inicializado")
+    except RuntimeError as e:
+        logger.warning("Ruby parser não disponível: %s", e)
+        console.print(f"[yellow]⚠ Ruby parser não disponível: {e}[/yellow]")
     return parsers
 
 

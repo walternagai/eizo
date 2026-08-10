@@ -172,7 +172,10 @@ src/eizo/
 │   ├── typescript.py # Tree-sitter TS/JS parser
 │   ├── go.py       # Tree-sitter Go parser
 │   ├── rust.py     # Tree-sitter Rust parser
-│   └── java.py     # Tree-sitter Java parser
+│   ├── java.py     # Tree-sitter Java parser
+│   ├── csharp.py   # Tree-sitter C# parser
+│   ├── php.py      # Tree-sitter PHP parser
+│   └── ruby.py     # Tree-sitter Ruby parser
 ├── queries/
 │   ├── search.py   # search_symbols(), get_symbol_context()
 │   ├── trace.py    # trace_call_path() — call graph traversal
@@ -233,6 +236,46 @@ src/eizo/
   ordinary call — handled separately as a call to `Type`'s constructor, with
   `generic_type`/`scoped_type_identifier` unwrapped so `new HashMap<>()` and
   `new java.util.HashMap()` both resolve to the simple name `HashMap`.
+- C# is AST-nested like Java (methods always inside a declaration body, no
+  pre-scan needed). `class`/`interface`/`struct`/`enum`/`record` map to
+  `kind="class"`; `namespace_declaration` is **not** a class — it's ignored
+  (the graph has no `module` kind; only what's inside the namespace is
+  extracted). The `base_list` (`class X : A, B`) is a **positional child**,
+  not a named field — `child_by_field_name("base_list")` returns `None`;
+  find it via `next(c for c in node.children if c.type == "base_list")`.
+  Base type names are `identifier`/`generic_name` nodes (not
+  `type_identifier` like Java), so `List<T>` is kept verbatim as a base name.
+  `using X;` maps to `import` (path is `identifier` or `qualified_name`).
+  Calls: `invocation_expression` with field `function` — `identifier` for
+  `f()`, `member_access_expression` for `obj.M()` (method name is the last
+  `identifier` child). `new Type(...)` is `object_creation_expression` with
+  field `type` (a call to `Type`'s constructor).
+- PHP is AST-nested like Java. `class`/`interface`/`trait`/`enum` map to
+  `kind="class"`; top-level `function_definition` maps to `function`
+  (closures have no `name` field and are skipped). The package exports
+  `language_php` (and `language_php_only`), **not** `language` like the other
+  tree-sitter-* packages — the import in `php.py` is the only place that
+  differs from the standard pattern. `base_clause` (extends) and
+  `class_interface_clause` (implements) are **positional children**, not
+  named fields; base names are `name`/`qualified_name` nodes (so
+  `\App\Base` is preserved verbatim). `use X;` maps to `import` (path is a
+  `qualified_name` inside `namespace_use_clause`; `use function`/`use const`
+  work the same). Calls: `function_call_expression` has field **`function`**
+  (not `name`); `member_call_expression` (`$obj->m()`) has field `name` (the
+  method name is the last `name` child); `object_creation_expression` has
+  **no** `type` field — the type is the positional `name` child.
+- Ruby: `class` and `module` both map to `kind="class"` (module is Ruby's
+  closest analogue; the graph has no `module` kind). Names are `constant`
+  nodes (not `identifier`). Inheritance: `class X < Y` has a named field
+  `superclass` wrapping `<` + the base `constant`. Method names may end in
+  `?`, `!` or `=` (`valid?`, `save!`, `name=`) — the `identifier` text
+  already includes the suffix, and setters use a `setter` node whose full
+  text is the name (`name=`); both are preserved intact. `def self.build`
+  is `singleton_method` (same handling as `method`). **Calls without
+  parentheses and without a receiver (`helper` bare) are `identifier` nodes,
+  not `call` nodes** — only `helper()`, `obj.speak` and `self.helper`
+  produce `call` nodes; bare method calls are a stated tradeoff (same class
+  of tradeoff as the rest of the parser).
 
 ## MCP quirks
 
@@ -274,13 +317,16 @@ src/eizo/
 - Coverage gate: 70%.
 - `cli.py`: 99% coverage; `__main__.py`: 100% coverage.
 - `asyncio_mode = auto` in pytest config.
-- 609 tests total. Test files include: `test_cli.py`, `test_main.py`, `test_indexer.py`,
+- 687 tests total. Test files include: `test_cli.py`, `test_main.py`, `test_indexer.py`,
   `test_indexer_extended.py`, `test_incremental.py`, `test_analysis.py`, `test_export.py`,
   `test_export_html.py`, `test_queries_extended.py`, `test_store_extended.py`,
   `test_parser_python_extended.py`, `test_parser_typescript_extended.py`,
   `test_parser_go.py`, `test_parser_go_extended.py`,
   `test_parser_rust.py`, `test_parser_rust_extended.py`,
   `test_parser_java.py`, `test_parser_java_extended.py`,
+  `test_parser_csharp.py`, `test_parser_csharp_extended.py`,
+  `test_parser_php.py`, `test_parser_php_extended.py`,
+  `test_parser_ruby.py`, `test_parser_ruby_extended.py`,
   `test_mcp_server.py`, `test_coverage_gaps.py`, `test_queries_cycles.py`,
   `test_queries_metrics.py`, `test_queries_why.py`, `test_queries_diff.py`,
   `test_cli_cycles.py`, `test_cli_metrics.py`, `test_cli_why.py`, `test_cli_diff.py`.

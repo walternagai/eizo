@@ -7,11 +7,12 @@ on:
 
 jobs:
   test:
-    name: Python ${{ matrix.python-version }}
-    runs-on: ubuntu-latest
+    name: Python ${{ matrix.python-version }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
         python-version: ["3.10", "3.11", "3.12"]
 
     steps:
@@ -24,8 +25,23 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev]"
 
+      # `make` não existe por padrão no Windows — roda os comandos
+      # diretamente lá; nos demais OS usa o Makefile.
       - name: Lint, typecheck and tests
+        if: runner.os != 'Windows'
         run: make check
 
+      - name: Lint (Windows)
+        if: runner.os == 'Windows'
+        run: python -m ruff check src/ tests/
+
+      - name: Typecheck (Windows)
+        if: runner.os == 'Windows'
+        run: python -m mypy src/eizo/
+
+      - name: Tests (Windows)
+        if: runner.os == 'Windows'
+        run: python -m pytest tests/ -q
+
       - name: Coverage (gate >= 70%)
-        run: python3 -m pytest --cov=src/eizo --cov-report=term-missing --cov-fail-under=70 -q
+        run: python -m pytest --cov=src/eizo --cov-report=term-missing --cov-fail-under=70 -q

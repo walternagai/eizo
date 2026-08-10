@@ -18,7 +18,7 @@
 | Camada | Tecnologia |
 |--------|-----------|
 | CLI | Python 3.10+ / Click / Rich |
-| Parsing | Tree-sitter (Python + TypeScript/JavaScript + Go + Rust + Java) |
+| Parsing | Tree-sitter (Python + TypeScript/JavaScript + Go + Rust + Java + C# + PHP + Ruby) |
 | Grafo | SQLite (WAL mode, FTS5) |
 | MCP | `mcp` Python SDK |
 | Testes | pytest + pytest-cov |
@@ -35,6 +35,30 @@ cd eizo
 make install
 # ou: pip install -e ".[dev]"
 ```
+
+### Instalação no Windows
+
+O Eizō suporta Windows nativamente (Python 3.10+). O `make` não existe por
+padrão no Windows — use `py` (o launcher oficial do Python) diretamente:
+
+```powershell
+# Instale com dependências de desenvolvimento
+py -m pip install -e ".[dev]"
+
+# Ou apenas o pacote, sem dev deps
+py -m pip install eizo
+```
+
+Notas:
+
+- Requer **Python 3.10 ou superior** no Windows (instale pelo
+  [python.org](https://www.python.org/downloads/) ou Microsoft Store).
+- Se `py` não estiver disponível, use `python -m pip ...` (desde que o
+  Python esteja no PATH).
+- Os parsers Tree-sitter (Python, TypeScript, Go, Rust, Java, C#, PHP, Ruby)
+  têm wheels para Windows — não é necessário compilar nada.
+- O CI roda a suíte completa (lint + typecheck + testes + coverage) em
+  `windows-latest` a cada push/PR.
 
 ## Uso
 
@@ -538,7 +562,10 @@ eizo/
 │   │   ├── typescript.py    # Parser TS/JS (Tree-sitter)
 │   │   ├── go.py            # Parser Go (Tree-sitter)
 │   │   ├── rust.py          # Parser Rust (Tree-sitter)
-│   │   └── java.py          # Parser Java (Tree-sitter)
+│   │   ├── java.py          # Parser Java (Tree-sitter)
+│   │   ├── csharp.py        # Parser C# (Tree-sitter)
+│   │   ├── php.py           # Parser PHP (Tree-sitter)
+│   │   └── ruby.py          # Parser Ruby (Tree-sitter)
 │   ├── queries/
 │   │   ├── search.py        # Busca textual e FTS5
 │   │   ├── trace.py         # Call graph
@@ -575,6 +602,12 @@ eizo/
 │   ├── test_parser_go_extended.py
 │   ├── test_parser_java.py
 │   ├── test_parser_java_extended.py
+│   ├── test_parser_csharp.py
+│   ├── test_parser_csharp_extended.py
+│   ├── test_parser_php.py
+│   ├── test_parser_php_extended.py
+│   ├── test_parser_ruby.py
+│   ├── test_parser_ruby_extended.py
 │   ├── test_parser_python.py
 │   ├── test_parser_python_extended.py
 │   ├── test_parser_rust.py
