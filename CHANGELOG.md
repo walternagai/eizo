@@ -7,6 +7,10 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 
 ## [Unreleased]
 
+### Corrigido
+
+- Portabilidade Windows: `_display_path` normaliza separadores (`\` → `/`) e o teste de `get_db_path` compara com `Path` em vez de string hardcoded — 2 testes falhavam no CI Windows
+
 ### Adicionado
 
 - **API pública estável (B14)**: `__all__` explícito em `eizo`, `eizo.graph` e `eizo.queries`; contrato de estabilidade e deprecation policy documentados em `AGENTS.md`, `README.md` e `docs/api.md`

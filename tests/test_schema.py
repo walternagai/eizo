@@ -20,7 +20,7 @@ class TestSchema:
     def test_get_db_path_custom(self) -> None:
         """get_db_path com path customizado."""
         path = get_db_path(Path("/tmp/teste"))
-        assert str(path) == "/tmp/teste/.eizo/graph.db"
+        assert path == Path("/tmp/teste") / ".eizo" / "graph.db"
 
     def test_ensure_db_dir(self, tmp_path: Path) -> None:
         """ensure_db_dir deve criar o diretório .eizo."""

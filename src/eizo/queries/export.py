@@ -370,6 +370,8 @@ def _component_id(file_path: str, prefix: str) -> str:
 def _display_path(file_path: str, prefix: str) -> str:
     """Retorna caminho legível para exibição no diagrama."""
     rel = _relative_repo_path(file_path, prefix)
+    # Normaliza separadores: no Windows, Path.relative_to devolve '\\'.
+    rel = rel.replace("\\", "/")
     # Remove prefixo src/ se presente
     if rel.startswith("src/"):
         rel = rel[4:]
