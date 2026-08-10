@@ -10,6 +10,7 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 ### Corrigido
 
 - Teto de dependência `mcp<2.0`: mcp 2.0 removeu `mcp.server.fastmcp` (quebra o import) e deixou o decorator `@mcp.tool()` sem tipagem (quebra `mypy --strict` com `untyped-decorator`)
+- Teste `test_cli_merge_config_no_command_values` dependia do CWD: falhava em ambiente limpo (CI) sem `.eizo/graph.db`; agora usa `monkeypatch.chdir` num repo indexado vazio
 
 ## [0.2.0] - 2026-08-01
 

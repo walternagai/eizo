@@ -443,12 +443,17 @@ function test() {
 
     # ─── cli.py: linhas 183, 204, 224, 250, 369-370, 430-431, 494-495, 547-552, 672-676, 687-688 ───
 
-    def test_cli_merge_config_no_command_values(self) -> None:
+    def test_cli_merge_config_no_command_values(
+        self, indexed_empty_repo: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """_merge_config sem command_values usa repo_path default '.'."""
         from click.testing import CliRunner
 
         from eizo.cli import main
 
+        # CWD no repo indexado vazio: o default '.' resolve para um grafo
+        # existente, sem depender do estado do diretório de execução.
+        monkeypatch.chdir(indexed_empty_repo)
         runner = CliRunner()
         result = runner.invoke(main, ["status"])
         assert result.exit_code == 0
