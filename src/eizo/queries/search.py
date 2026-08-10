@@ -28,6 +28,19 @@ def search_symbols(
     + code_snippet, ranqueada por relevância — útil para buscar por
     conteúdo (ex: um termo mencionado numa docstring) que a busca por nome
     nunca encontraria.
+
+    Args:
+        store: GraphStore consultado.
+        query: Texto de busca (substring do nome, ou query FTS5 com
+            full_text=True).
+        kind: Filtra por tipo de nó (function, class, method, import...).
+        language: Filtra por linguagem (python, typescript...).
+        limit: Máximo de resultados (padrão: 50).
+        full_text: Se True, busca full-text (FTS5); se False, busca por
+            substring no nome (padrão).
+
+    Returns:
+        Lista de Node correspondentes, ordenados por relevância.
     """
     if full_text:
         return store.search_nodes_fts(query, kind=kind, language=language, limit=limit)

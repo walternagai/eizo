@@ -19,6 +19,31 @@ make coverage    # pytest --cov=src/eizo --cov-report=term-missing
 - `python -m eizo`: `eizo/__main__.py` → `cli.main()`
 - `eizo.mcp.server.serve_mcp()`: FastMCP server, invoked via `eizo mcp`
 
+## API pública (Sprint 9 — contrato de estabilidade)
+
+A superfície pública do pacote é definida pelos `__all__` de
+`eizo/__init__.py`, `eizo/graph/__init__.py` e `eizo/queries/__init__.py`,
+documentada em `docs/api.md`:
+
+- **API estável** (promessa de compatibilidade; deprecation cycle de 2
+  versões — ver `docs/api.md`): `GraphStore`, `Node`, `Edge`, `GraphStats`,
+  `DEFINITION_KINDS`, `index_repository`, as funções de `eizo.queries.*`
+  (`search_symbols`, `get_symbol_context`, `trace_call_path`,
+  `find_dependency_path`, `analyze_impact`, `find_dead_code`, `find_hotspots`,
+  `find_import_cycles`, `compute_symbol_metrics`, `diff_against_ref`,
+  `diff_between_refs`, `export_dot`, `export_mermaid`, `export_json`,
+  `export_html`) e `eizo.mcp.server.create_server`/`serve_mcp`.
+- **CLI estável por contrato de CLI**: `eizo.cli` é estável quanto a
+  comandos/opções (remover/renomear comando segue o mesmo deprecation cycle),
+  não quanto a imports Python.
+- **Internos** (mudam sem aviso entre versões — sempre importar via
+  re-exports do pacote): `eizo.graph.schema`, `eizo.graph.store`
+  (diretamente), `eizo.parser.*`, `eizo.indexer` (diretamente),
+  `eizo.static`, `eizo.__main__` e qualquer função com prefixo `_`.
+
+Novos recursos públicos DEVEM ser adicionados ao `__all__` correspondente e
+a `docs/api.md`; remoção/renome de símbolo público exige o deprecation cycle.
+
 ## CLI conventions
 
 - Global output format: `--output-format [table|json]` (default `table`).

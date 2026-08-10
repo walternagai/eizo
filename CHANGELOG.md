@@ -9,6 +9,9 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 
 ### Adicionado
 
+- **API pública estável (B14)**: `__all__` explícito em `eizo`, `eizo.graph` e `eizo.queries`; contrato de estabilidade e deprecation policy documentados em `AGENTS.md`, `README.md` e `docs/api.md`
+- **Docs de API (B15)**: `docs/api.md` com assinaturas e descrição de toda a superfície pública; docstrings completas (Args/Returns) em todos os módulos públicos
+- **`eizo diff <ref1>..<ref2>` (B13)**: diff de símbolos entre dois refs git, além do diff working-tree-vs-ref já existente (`diff_between_refs` em `eizo.queries.diff`)
 - Chamadas dentro de macros Rust (`println!`, `format!`, `vec!`, macros custom) agora são capturadas — re-parse do argumento `token_tree` como expressões (B8)
 - Fuzz tests determinísticos dos parsers (seed fixa) — nenhum input malformado pode crashar o parse (B11)
 - Benchmark de indexação em escala (`benchmarks/benchmark_index.py`) com resultados documentados em `benchmarks/RESULTS.md` (B12)

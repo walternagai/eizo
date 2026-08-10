@@ -72,3 +72,58 @@ class TestCliDiff:
         result = runner.invoke(main, ["diff", "base_ref", "--repo", str(git_repo)])
         assert result.exit_code == 0
         assert not (git_repo / ".eizo").exists()
+
+
+class TestCliDiffBetweenRefs:
+    """Testa o comando 'eizo diff ref1..ref2' (CLI)."""
+
+    @pytest.fixture
+    def two_refs(self, git_repo: Path) -> Path:
+        """git_repo já tem o commit base; cria branch ref_a e um 2º commit."""
+        _git(git_repo, "branch", "ref_a")
+        (git_repo / "lib.py").write_text("def helper():\n    return 42\n\ndef new_func():\n    pass\n")
+        _git(git_repo, "add", "lib.py")
+        _git(git_repo, "commit", "-q", "-m", "change")
+        return git_repo
+
+    def test_diff_between_refs_shows_symbols(self, two_refs: Path) -> None:
+        runner = CliRunner()
+        result = runner.invoke(main, ["diff", "ref_a..HEAD", "--repo", str(two_refs)])
+
+        assert result.exit_code == 0
+        assert "modified" in result.output
+        assert "+ function new_func" in result.output
+        assert "- function old_func" in result.output
+        assert "ref_a..HEAD" in result.output
+
+    def test_diff_between_same_refs_no_changes(self, two_refs: Path) -> None:
+        runner = CliRunner()
+        result = runner.invoke(main, ["diff", "ref_a..ref_a", "--repo", str(two_refs)])
+
+        assert result.exit_code == 0
+        assert "Nenhuma mudança" in result.output
+
+    def test_diff_between_refs_json_format(self, two_refs: Path) -> None:
+        runner = CliRunner()
+        result = runner.invoke(
+            main, ["--output-format", "json", "diff", "ref_a..HEAD", "--repo", str(two_refs)]
+        )
+
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert parsed["ref"] == "ref_a..HEAD"
+        assert parsed["files"][0]["added"] == [["new_func", "function"]]
+
+    def test_diff_between_refs_nonexistent_ref_fails(self, two_refs: Path) -> None:
+        runner = CliRunner()
+        result = runner.invoke(main, ["diff", "ref_que_nao_existe..HEAD", "--repo", str(two_refs)])
+
+        assert result.exit_code == 1
+        assert "revision" in result.output or "revisão" in result.output or "unknown" in result.output
+
+    def test_diff_invalid_range_syntax_fails(self, two_refs: Path) -> None:
+        runner = CliRunner()
+        result = runner.invoke(main, ["diff", "..HEAD", "--repo", str(two_refs)])
+
+        assert result.exit_code == 1
+        assert "ref1..ref2" in result.output

@@ -241,6 +241,13 @@ def export_json(
 ) -> str:
     """Exporta o grafo para formato JSON.
 
+    Args:
+        store: GraphStore consultado.
+        kind: Filtra nós por tipo (function, class, method...).
+        language: Filtra nós por linguagem (python, typescript...).
+        limit: Máximo de nós (None = sem limite).
+        edge_kinds: Filtra arestas por tipo (calls, contains...).
+
     Returns:
         String JSON com 'nodes' e 'edges'.
     """
@@ -390,6 +397,9 @@ def export_architecture_mermaid(store: GraphStore) -> str:
     A visualização prioriza componentes que participam de relações
     significativas (chamadas, imports, herança), deixando de fora nós
     isolados, arquivos de teste e vendors externos.
+
+    Args:
+        store: GraphStore consultado.
 
     Returns:
         String no formato Mermaid (graph TD).

@@ -3,7 +3,7 @@
 Comandos:
   eizo init     Indexa o repositório atual
   eizo watch    Reindexa continuamente ao detectar mudanças
-  eizo diff     Compara símbolos do working tree contra um ref git
+  eizo diff     Compara símbolos do working tree contra um ref, ou entre dois refs
   eizo search   Busca símbolos no grafo
   eizo trace    Traça call graph de um símbolo
   eizo why      Explica por que dois símbolos estão acoplados
@@ -43,7 +43,7 @@ from eizo.graph.store import GraphStore
 from eizo.indexer import index_repository
 from eizo.queries.analysis import find_dead_code, find_hotspots
 from eizo.queries.cycles import find_import_cycles
-from eizo.queries.diff import diff_against_ref
+from eizo.queries.diff import diff_against_ref, diff_between_refs
 from eizo.queries.export import (
     export_architecture_mermaid,
     export_dot,
@@ -1221,25 +1221,41 @@ def metrics(ctx: click.Context, symbol_name: str, repo_path: str) -> None:
 
 
 @main.command(
-    short_help="Compara símbolos do working tree contra um ref git",
-    epilog="\b\nExemplos:\n  eizo diff main\n  eizo diff origin/main --repo /caminho/do/repo",
+    short_help="Compara símbolos do working tree contra um ref, ou entre dois refs",
+    epilog=(
+        "\b\n"
+        "Exemplos:\n"
+        "  eizo diff main\n"
+        "  eizo diff main..origin/main\n"
+        "  eizo diff origin/main --repo /caminho/do/repo"
+    ),
 )
 @click.argument("ref")
 @_repo_option()
 @click.pass_context
 def diff(ctx: click.Context, ref: str, repo_path: str) -> None:
-    """Mostra quais símbolos foram adicionados/removidos em relação a um ref git.
+    """Mostra quais símbolos foram adicionados/removidos entre duas versões.
+
+    Com um único ref, compara o working tree contra ele (ex: `eizo diff
+    main` — "o que meu branch mudou em relação a main"). Com `ref1..ref2`,
+    compara os dois refs entre si (ex: `eizo diff main..origin/main`).
 
     Não precisa de `eizo init` — reparseia direto do disco e via `git show`,
-    sem tocar no grafo indexado. Cobre "o que meu branch mudou em relação a
-    main": para cada arquivo alterado, mostra definições (function/method/
-    class) que apareceram ou sumiram. Mudanças que não afetam a superfície
-    de símbolos (ex: só o corpo de uma função) não aparecem.
+    sem tocar no grafo indexado. Para cada arquivo alterado, mostra
+    definições (function/method/class) que apareceram ou sumiram. Mudanças
+    que não afetam a superfície de símbolos (ex: só o corpo de uma função)
+    não aparecem.
     """
     cfg = _merge_config(ctx, command_values={"repo_path": repo_path})
     repo_path = cfg.get("repo_path", repo_path)
     try:
-        result = diff_against_ref(repo_path, ref)
+        if ".." in ref:
+            ref1, ref2 = ref.split("..", 1)
+            if not ref1 or not ref2:
+                raise click.ClickException("Sintaxe inválida: use `eizo diff ref1..ref2`.")
+            result = diff_between_refs(repo_path, ref1, ref2)
+        else:
+            result = diff_against_ref(repo_path, ref)
     except RuntimeError as e:
         raise click.ClickException(str(e)) from e
 

@@ -32,6 +32,15 @@ def real_referrers(store: GraphStore, node: Node) -> list[Node]:
 
     Deduplica por id (não por (id, kind)): um caller que tanto importa quanto
     chama `node` deve contar como uma única referência para dead code/hotspots.
+
+    Args:
+        store: GraphStore consultado.
+        node: Nó de definição (function/method/class) cujas referências
+            reais serão buscadas.
+
+    Returns:
+        Lista de Node que referenciam `node` (deduplicada por id, sem
+        arestas estruturais `contains`).
     """
     seen: dict[str, Node] = {}
     for referrer, _kind in store.get_real_references(node.id, node.name):

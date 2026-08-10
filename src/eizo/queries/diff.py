@@ -1,17 +1,18 @@
-"""`eizo diff <ref>` — compara o working tree contra um ref git, símbolo a símbolo.
+"""`eizo diff` — compara símbolos entre o working tree e um ref, ou entre dois refs.
 
 Não mantém um segundo grafo indexado nem reindexa nada: para cada arquivo que
-mudou entre `ref` e o working tree (`git diff --name-only`), reparseia as
-duas versões — disco atual e `git show ref:path` — com o mesmo parser usado
-na indexação, e compara os conjuntos de definições (nome, kind). Cobre o caso
-mais comum ("o que meu branch mudou em relação a main"); não cobre diff entre
-dois refs arbitrários nem impacto histórico de símbolos removidos, que
-exigiriam um segundo grafo completo.
+mudou (`git diff --name-only`), reparseia as duas versões — disco atual e
+`git show ref:path`, ou `git show ref1:path`/`git show ref2:path` — com o
+mesmo parser usado na indexação, e compara os conjuntos de definições
+(nome, kind). Cobre o caso mais comum ("o que meu branch mudou em relação a
+main") e o diff entre dois refs arbitrários (`ref1..ref2`); não cobre impacto
+histórico de símbolos removidos, que exigiriam um segundo grafo completo.
 """
 
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -31,17 +32,20 @@ def _run_git_show(repo_path: Path, ref: str, rel_path: str) -> str | None:
     return result.stdout
 
 
-def _changed_files(repo_path: Path, ref: str) -> list[str]:
-    """Arquivos que mudaram entre `ref` e o working tree (paths relativos à raiz do git).
+def _changed_files(repo_path: Path, ref: str, ref2: str | None = None) -> list[str]:
+    """Arquivos que mudaram entre `ref` e o working tree, ou entre `ref` e `ref2`.
+
+    Com `ref2=None`, compara `ref` contra o working tree (diff local).
+    Com `ref2` informado, compara os dois refs entre si.
 
     Diferente de `_run_git_show`, falha aqui É erro real — ref inexistente,
     ou `repo_path` fora de um repositório git — e deve interromper o diff,
     não ser tratada como "nenhuma mudança".
     """
-    result = subprocess.run(
-        ["git", "-C", str(repo_path), "diff", "--name-only", ref],
-        capture_output=True, text=True, check=False,
-    )
+    args = ["git", "-C", str(repo_path), "diff", "--name-only", ref]
+    if ref2 is not None:
+        args.append(ref2)
+    result = subprocess.run(args, capture_output=True, text=True, check=False)
     if result.returncode != 0:
         msg = result.stderr.strip() or f"git diff falhou para o ref '{ref}'"
         raise RuntimeError(msg)
@@ -60,6 +64,91 @@ def _symbol_set(parsers: list[Any], file_path: Path, source: str | None) -> set[
         return set()
     nodes, _edges = parser.parse_file(file_path, source)
     return {(n.name, n.kind) for n in nodes if n.kind in DEFINITION_KINDS}
+
+
+def _diff_sources(
+    changed: list[str],
+    ref_source: Callable[[str], str | None],
+    current_source: Callable[[str], str | None],
+) -> list[dict[str, Any]]:
+    """Compara os conjuntos de símbolos de duas versões, arquivo por arquivo.
+
+    As duas versões são fornecidas como callables `ref_source`/`current_source`
+    (path relativo → conteúdo, ou None se o arquivo não existe naquela versão),
+    para que a mesma lógica sirva tanto para diff working-tree-vs-ref quanto
+    para diff entre dois refs. `changed` é a lista de paths alterados
+    (produzida por `_changed_files`). Retorna as entradas com
+    "file"/"status"/"added"/"removed" (mesma forma de `diff_against_ref`).
+    """
+    parsers = _get_parsers()
+    extensions = {e for p in parsers for e in p.extensions}
+
+    results: list[dict[str, Any]] = []
+    for rel_path in changed:
+        if Path(rel_path).suffix not in extensions:
+            continue
+
+        current = current_source(rel_path)
+        previous = ref_source(rel_path)
+
+        current_symbols = _symbol_set(parsers, Path(rel_path), current)
+        ref_symbols = _symbol_set(parsers, Path(rel_path), previous)
+
+        added = sorted(current_symbols - ref_symbols)
+        removed = sorted(ref_symbols - current_symbols)
+
+        if current is None:
+            status = "removed"
+        elif previous is None:
+            status = "added"
+        else:
+            status = "modified"
+
+        if status in ("added", "removed") or added or removed:
+            results.append({
+                "file": rel_path,
+                "status": status,
+                "added": [list(s) for s in added],
+                "removed": [list(s) for s in removed],
+            })
+
+    return results
+
+
+def diff_between_refs(
+    repo_path: Path | str, ref1: str, ref2: str
+) -> dict[str, Any]:
+    """Compara os símbolos entre dois refs git (`ref1..ref2`), arquivo por arquivo.
+
+    Args:
+        repo_path: Raiz do repositório (também a raiz git usada nos comandos).
+        ref1: Ref git de origem da comparação (branch, tag, commit — ex: 'main').
+        ref2: Ref git de destino da comparação.
+
+    Returns:
+        Dict com 'ref' = 'ref1..ref2' e 'files': lista de entradas por arquivo
+        alterado, cada uma com:
+        - "file": path relativo.
+        - "status": "added" (novo), "removed" (apagado), ou "modified".
+        - "added"/"removed": listas de [nome, kind] — símbolos que apareceram
+          ou sumiram naquele arquivo entre `ref1` e `ref2`.
+
+        Arquivos sem parser disponível (extensão não suportada) são ignorados.
+        Arquivos modificados sem mudança de símbolos não aparecem.
+
+    Raises:
+        RuntimeError: `repo_path` não é um repositório git, ou um dos refs
+            não existe.
+    """
+    repo_path = Path(repo_path).resolve()
+    return {
+        "ref": f"{ref1}..{ref2}",
+        "files": _diff_sources(
+            _changed_files(repo_path, ref1, ref2),
+            lambda rel: _run_git_show(repo_path, ref1, rel),
+            lambda rel: _run_git_show(repo_path, ref2, rel),
+        ),
+    }
 
 
 def diff_against_ref(repo_path: Path | str, ref: str) -> dict[str, Any]:
@@ -86,38 +175,15 @@ def diff_against_ref(repo_path: Path | str, ref: str) -> dict[str, Any]:
         RuntimeError: `repo_path` não é um repositório git, ou `ref` não existe.
     """
     repo_path = Path(repo_path).resolve()
-    changed = _changed_files(repo_path, ref)
-    parsers = _get_parsers()
-    extensions = {e for p in parsers for e in p.extensions}
-
-    results: list[dict[str, Any]] = []
-    for rel_path in changed:
-        if Path(rel_path).suffix not in extensions:
-            continue
-
-        abs_path = repo_path / rel_path
-        current_source = abs_path.read_text(encoding="utf-8", errors="replace") if abs_path.is_file() else None
-        ref_source = _run_git_show(repo_path, ref, rel_path)
-
-        current_symbols = _symbol_set(parsers, abs_path, current_source)
-        ref_symbols = _symbol_set(parsers, abs_path, ref_source)
-
-        added = sorted(current_symbols - ref_symbols)
-        removed = sorted(ref_symbols - current_symbols)
-
-        if current_source is None:
-            status = "removed"
-        elif ref_source is None:
-            status = "added"
-        else:
-            status = "modified"
-
-        if status in ("added", "removed") or added or removed:
-            results.append({
-                "file": rel_path,
-                "status": status,
-                "added": [list(s) for s in added],
-                "removed": [list(s) for s in removed],
-            })
-
-    return {"ref": ref, "files": results}
+    return {
+        "ref": ref,
+        "files": _diff_sources(
+            _changed_files(repo_path, ref),
+            lambda rel: _run_git_show(repo_path, ref, rel),
+            lambda rel: (
+                (repo_path / rel).read_text(encoding="utf-8", errors="replace")
+                if (repo_path / rel).is_file()
+                else None
+            ),
+        ),
+    }

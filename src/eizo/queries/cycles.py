@@ -87,6 +87,9 @@ def _find_one_cycle_path(scc: list[str], graph: dict[str, set[str]]) -> list[str
 def find_import_cycles(store: GraphStore) -> list[dict[str, Any]]:
     """Encontra ciclos de dependência entre arquivos via imports.
 
+    Args:
+        store: GraphStore consultado (usa `get_file_import_graph`).
+
     Returns:
         Lista de dicts, um por ciclo, ordenada do maior grupo para o menor:
         - "files": arquivos que participam do ciclo (ordenados).

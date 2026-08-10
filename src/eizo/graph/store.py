@@ -69,19 +69,39 @@ def _sanitize_fts_query(query: str) -> str:
 
 
 class GraphStore:
-    """Armazena e consulta o grafo de conhecimento em SQLite."""
+    """Armazena e consulta o grafo de conhecimento em SQLite.
+
+    API pública estável (ver deprecation policy em AGENTS.md e docs/api.md).
+    Métodos com prefixo ``_`` e o módulo ``eizo.graph.schema`` são internos.
+    """
 
     def __init__(self, path: Path | None = None) -> None:
+        """Abre (criando se necessário) o banco SQLite do grafo.
+
+        Args:
+            path: Caminho do arquivo SQLite. None usa o default
+                (``{repo}/.eizo/graph.db`` via ``ensure_db_dir``).
+        """
         self.db_path = ensure_db_dir(path)
         self._conn: sqlite3.Connection | None = None
 
     @property
     def conn(self) -> sqlite3.Connection:
+        """Conexão SQLite (aberta sob demanda, mantida até `close`).
+
+        Returns:
+            Conexão SQLite ativa (WAL mode, foreign keys ON).
+        """
         if self._conn is None:
             self._conn = open_db(self.db_path)
         return self._conn
 
     def close(self) -> None:
+        """Fecha a conexão SQLite, se aberta. Idempotente.
+
+        Returns:
+            Nada.
+        """
         if self._conn is not None:
             self._conn.close()
             self._conn = None
@@ -89,7 +109,14 @@ class GraphStore:
     # ─── Node operations ───────────────────────────────────────
 
     def upsert_node(self, node: Node) -> None:
-        """Insere ou atualiza um nó no grafo."""
+        """Insere ou atualiza um nó no grafo.
+
+        Args:
+            node: Nó a persistir (upsert por id — última escrita vence).
+
+        Returns:
+            Nada.
+        """
         self.conn.execute(
             """INSERT OR REPLACE INTO nodes
                (id, name, kind, file_path, language, line_start, line_end, docstring, code_snippet, metadata)
@@ -117,6 +144,13 @@ class GraphStore:
         Isso importa em arquivos minificados, onde tudo divide a mesma linha e o
         id (`arquivo:nome:linha`) colide aos milhares: sem colapsar, o índice FTS
         acumulava uma entrada órfã por ocorrência repetida.
+
+        Args:
+            nodes: Nós a persistir (upsert por id; FTS sincronizado por rowid
+                determinístico — ver `schema.fts_rowid`).
+
+        Returns:
+            Nada.
         """
         nodes = list({n.id: n for n in nodes}.values())
         data = [
@@ -158,7 +192,14 @@ class GraphStore:
         self.conn.commit()
 
     def get_node(self, node_id: str) -> Node | None:
-        """Busca um nó pelo ID."""
+        """Busca um nó pelo ID.
+
+        Args:
+            node_id: ID SHA-256[:16] do nó.
+
+        Returns:
+            O nó encontrado, ou None se não existir.
+        """
         row = self.conn.execute(
             "SELECT * FROM nodes WHERE id = ?", (node_id,)
         ).fetchone()
@@ -171,7 +212,18 @@ class GraphStore:
         language: str | None = None,
         limit: int = 50,
     ) -> list[Node]:
-        """Busca nós por nome (LIKE), priorizando match exato e definições."""
+        """Busca nós por nome (LIKE), priorizando match exato e definições.
+
+        Args:
+            query: Substring do nome a buscar.
+            kind: Filtra por tipo de nó (function, class, method...).
+            language: Filtra por linguagem (python, typescript...).
+            limit: Máximo de resultados (padrão: 50).
+
+        Returns:
+            Lista de Node — match exato primeiro, depois definições
+            (function/method/class) antes de call sites/imports/files.
+        """
         sql = "SELECT * FROM nodes WHERE name LIKE ?"
         params: list[Any] = [f"%{query}%"]
 
@@ -210,7 +262,16 @@ class GraphStore:
         name: str,
         kind: str | None = None,
     ) -> list[Node]:
-        """Busca nós por nome exato (opcionalmente filtrados por kind)."""
+        """Busca nós por nome exato (opcionalmente filtrados por kind).
+
+        Args:
+            name: Nome exato do símbolo.
+            kind: Filtra por tipo de nó (function, class, method...).
+
+        Returns:
+            Lista de Node com o nome exato (pode incluir homônimos de
+            arquivos diferentes e stubs de call sites).
+        """
         sql = "SELECT * FROM nodes WHERE name = ?"
         params: list[Any] = [name]
 
@@ -222,7 +283,14 @@ class GraphStore:
         return [self._row_to_node(r) for r in rows]
 
     def get_nodes_by_file(self, file_path: str) -> list[Node]:
-        """Retorna todos os nós de um arquivo."""
+        """Retorna todos os nós de um arquivo.
+
+        Args:
+            file_path: Path relativo do arquivo (raiz do repo indexado).
+
+        Returns:
+            Lista de Node do arquivo, ordenada por `line_start`.
+        """
         rows = self.conn.execute(
             "SELECT * FROM nodes WHERE file_path = ? ORDER BY line_start",
             (file_path,),
@@ -230,7 +298,15 @@ class GraphStore:
         return [self._row_to_node(r) for r in rows]
 
     def delete_nodes_by_file(self, file_path: str) -> None:
-        """Remove todos os nós e arestas de um arquivo."""
+        """Remove todos os nós e arestas de um arquivo.
+
+        Args:
+            file_path: Path relativo do arquivo cujos nós serão removidos
+                (nós, arestas incidentes e entradas FTS).
+
+        Returns:
+            Nada.
+        """
         # Coleta IDs antes de deletar para limpar o FTS
         rows = self.conn.execute(
             "SELECT id FROM nodes WHERE file_path = ?", (file_path,)
@@ -270,6 +346,16 @@ class GraphStore:
         são escapadas), então caracteres como `"` no meio de um nome de
         símbolo nunca chegam a `MATCH` como sintaxe malformada.
         Retorna nós ordenados por relevância (rank FTS5).
+
+        Args:
+            query: Texto de busca (sintaxe FTS5 avançada com '*'/AND/OR/NOT
+                é detectada e passada direto; senão tratada como frase literal).
+            kind: Filtra por tipo de nó.
+            language: Filtra por linguagem.
+            limit: Máximo de resultados (padrão: 50).
+
+        Returns:
+            Lista de Node ordenados por relevância (rank FTS5).
         """
         fts_query = _sanitize_fts_query(query)
 
@@ -294,7 +380,11 @@ class GraphStore:
         return [self._row_to_node(r) for r in rows]
 
     def clear_all(self) -> None:
-        """Remove todos os nós e arestas."""
+        """Remove todos os nós e arestas (e índices FTS/file_index).
+
+        Returns:
+            Nada.
+        """
         self.conn.execute("DELETE FROM edges")
         self.conn.execute("DELETE FROM nodes")
         self.conn.execute("DELETE FROM nodes_fts")
@@ -304,7 +394,15 @@ class GraphStore:
     # ─── File index (incremental) ───────────────────────────────
 
     def get_file_index_entry(self, file_path: str) -> dict[str, Any] | None:
-        """Retorna entry de indexação incremental para um arquivo, ou None."""
+        """Retorna entry de indexação incremental para um arquivo, ou None.
+
+        Args:
+            file_path: Path relativo do arquivo.
+
+        Returns:
+            Dict com content_hash/mtime/indexed_at, ou None se o arquivo
+            não está no índice incremental.
+        """
         row = self.conn.execute(
             "SELECT content_hash, mtime, indexed_at FROM file_index WHERE file_path = ?",
             (file_path,),
@@ -314,7 +412,17 @@ class GraphStore:
         return {"content_hash": row["content_hash"], "mtime": row["mtime"], "indexed_at": row["indexed_at"]}
 
     def upsert_file_index(self, file_path: str, content_hash: str, mtime: float, indexed_at: str) -> None:
-        """Insere ou atualiza entry de indexação incremental."""
+        """Insere ou atualiza entry de indexação incremental.
+
+        Args:
+            file_path: Path relativo do arquivo.
+            content_hash: Hash do conteúdo indexado.
+            mtime: Mtime do arquivo no momento da indexação.
+            indexed_at: Timestamp ISO da indexação.
+
+        Returns:
+            Nada.
+        """
         self.conn.execute(
             """INSERT OR REPLACE INTO file_index (file_path, content_hash, mtime, indexed_at)
                VALUES (?, ?, ?, ?)""",
@@ -323,24 +431,51 @@ class GraphStore:
         self.conn.commit()
 
     def get_indexed_files(self) -> list[str]:
-        """Retorna os caminhos de todos os arquivos presentes no índice incremental."""
+        """Retorna os caminhos de todos os arquivos no índice incremental.
+
+        Returns:
+            Lista de paths relativos presentes em `file_index`.
+        """
         rows = self.conn.execute("SELECT file_path FROM file_index").fetchall()
         return [r["file_path"] for r in rows]
 
     def delete_file_index(self, file_path: str) -> None:
-        """Remove entry de indexação incremental para um arquivo."""
+        """Remove entry de indexação incremental para um arquivo.
+
+        Args:
+            file_path: Path relativo do arquivo a remover do índice.
+
+        Returns:
+            Nada.
+        """
         self.conn.execute("DELETE FROM file_index WHERE file_path = ?", (file_path,))
         self.conn.commit()
 
     def is_file_unchanged(self, file_path: str, content_hash: str) -> bool:
-        """Verifica se o arquivo já está indexado com o mesmo hash (não precisa reindexar)."""
+        """Verifica se o arquivo já está indexado com o mesmo hash.
+
+        Args:
+            file_path: Path relativo do arquivo.
+            content_hash: Hash do conteúdo atual do arquivo.
+
+        Returns:
+            True se o arquivo está indexado com este hash (não precisa
+            reindexar).
+        """
         entry = self.get_file_index_entry(file_path)
         return entry is not None and entry["content_hash"] == content_hash
 
     # ─── Edge operations ────────────────────────────────────────
 
     def upsert_edge(self, edge: Edge) -> None:
-        """Insere ou atualiza uma aresta."""
+        """Insere ou atualiza uma aresta.
+
+        Args:
+            edge: Aresta a persistir (upsert por (source, target, kind)).
+
+        Returns:
+            Nada.
+        """
         self.conn.execute(
             """INSERT OR REPLACE INTO edges (source_id, target_id, kind, metadata)
                VALUES (?, ?, ?, ?)""",
@@ -354,7 +489,14 @@ class GraphStore:
         self.conn.commit()
 
     def upsert_edges(self, edges: list[Edge]) -> None:
-        """Insere ou atualiza múltiplas arestas em lote."""
+        """Insere ou atualiza múltiplas arestas em lote.
+
+        Args:
+            edges: Arestas a persistir (upsert por (source, target, kind)).
+
+        Returns:
+            Nada.
+        """
         data = [
             (
                 e.source_id,
@@ -372,7 +514,15 @@ class GraphStore:
         self.conn.commit()
 
     def get_outgoing_edges(self, node_id: str, kind: str | None = None) -> list[Edge]:
-        """Retorna arestas que saem de um nó."""
+        """Retorna arestas que saem de um nó.
+
+        Args:
+            node_id: ID do nó de origem.
+            kind: Filtra por tipo de aresta (calls, contains, imports...).
+
+        Returns:
+            Lista de Edge com `source_id == node_id`.
+        """
         sql = "SELECT * FROM edges WHERE source_id = ?"
         params: list[Any] = [node_id]
         if kind:
@@ -382,7 +532,15 @@ class GraphStore:
         return [self._row_to_edge(r) for r in rows]
 
     def get_incoming_edges(self, node_id: str, kind: str | None = None) -> list[Edge]:
-        """Retorna arestas que chegam em um nó."""
+        """Retorna arestas que chegam em um nó.
+
+        Args:
+            node_id: ID do nó de destino.
+            kind: Filtra por tipo de aresta (calls, contains, imports...).
+
+        Returns:
+            Lista de Edge com `target_id == node_id`.
+        """
         sql = "SELECT * FROM edges WHERE target_id = ?"
         params: list[Any] = [node_id]
         if kind:
@@ -464,6 +622,13 @@ class GraphStore:
 
         Retorna o próprio call_node se não houver definição correspondente
         (preserva informação — ex: chamadas a símbolos externos ao repo).
+
+        Args:
+            call_node: Nó kind='call' a resolver.
+
+        Returns:
+            A definição resolvida (desambiguada por arquivo/import), ou o
+            próprio `call_node` se não houver definição correspondente.
         """
         return self._resolve_named_stub(call_node) or call_node
 
@@ -501,6 +666,15 @@ class GraphStore:
 
         Deduplica por (referrer.id, kind): o mesmo caller pode aparecer via
         múltiplos caminhos, mas não deve ser contado duas vezes.
+
+        Args:
+            node_id: ID do nó cujas referências serão buscadas.
+            node_name: Nome do símbolo (usado para localizar call sites,
+                stubs de herança e imports homônimos).
+
+        Returns:
+            Lista de (referrer, kind) — cada referência real, deduplicada
+            por (id, kind), com o tipo de relação (calls/imports/inherits).
         """
         node = self.get_node(node_id)
         if node is None:
@@ -563,6 +737,10 @@ class GraphStore:
         definições homônimas (`_module_hint_matches_file`) — não é
         resolução real de import/módulo, só aproximação best-effort.
         Usado por `queries.cycles` para detectar dependência circular.
+
+        Returns:
+            Dict `{file_path: set[file_path]}` — um nó por arquivo
+            indexado, com os arquivos que ele importa (aproximação).
         """
         file_rows = self.conn.execute("SELECT DISTINCT file_path FROM nodes WHERE kind = 'file'").fetchall()
         all_files = [r["file_path"] for r in file_rows]
@@ -583,7 +761,12 @@ class GraphStore:
     # ─── Stats ─────────────────────────────────────────────────
 
     def get_stats(self) -> GraphStats:
-        """Retorna estatísticas do grafo."""
+        """Retorna estatísticas do grafo.
+
+        Returns:
+            GraphStats com contagens de nós/arestas (por linguagem/kind),
+            total de arquivos e tamanho do DB em bytes.
+        """
         stats = GraphStats()
 
         row = self.conn.execute("SELECT COUNT(*) FROM nodes").fetchone()

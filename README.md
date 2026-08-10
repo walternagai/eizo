@@ -88,7 +88,7 @@ Faz polling, não reage a eventos do sistema de arquivos — mas a indexação
 incremental já é rápida o bastante para isso não importar na prática. Ctrl+C
 para parar.
 
-### Comparar contra um ref git
+### Comparar contra um ref git (ou entre dois refs)
 
 ```bash
 # O que mudou (em símbolos) no working tree em relação a main
@@ -96,6 +96,9 @@ eizo diff main
 
 # Contra um branch remoto
 eizo diff origin/main
+
+# Entre dois refs (branch, tag ou commit)
+eizo diff main..origin/main
 ```
 
 Não precisa de `eizo init` — reparseia direto do disco e via `git show`, sem
@@ -437,6 +440,7 @@ eizo status
 | `eizo init [path]` | Indexa repositório no grafo (incremental — cria, atualiza e remove) |
 | `eizo watch [path]` | Reindexa continuamente ao detectar mudanças (polling) |
 | `eizo diff <ref>` | Compara símbolos do working tree contra um ref git |
+| `eizo diff <ref1>..<ref2>` | Compara símbolos entre dois refs git |
 | `eizo search <query>` | Busca símbolos |
 | `eizo trace <symbol>` | Call graph |
 | `eizo why <a> <b>` | Caminho de dependência entre dois símbolos |
@@ -543,7 +547,7 @@ eizo/
 │   │   ├── analysis.py      # Código morto e hotspots
 │   │   ├── cycles.py        # Ciclos de import (Tarjan SCC)
 │   │   ├── metrics.py       # Fan-in, fan-out e LOC
-│   │   ├── diff.py          # Diff de símbolos contra ref git
+│   │   ├── diff.py          # Diff de símbolos contra ref git (1 ou 2 refs)
 │   │   └── export.py        # Export DOT/Mermaid/JSON/HTML + arquitetura
 │   ├── static/              # Assets do HTML export
 │   │   └── vendor/          # vis-network, etc.
@@ -602,6 +606,28 @@ Caminho até a versão 1.0.0:
 - **Fase 2 (Sprint 9) — API pública estável**: congelamento da API, docs de API, diff entre branches
 - **Fase 3 (Sprint 10) — Mais linguagens**: parsers C#/PHP/Ruby, suporte nativo a Windows
 - **Fase 4 (Sprint 11) — Release 1.0.0**: export SVG/PNG, changelog consolidado, tag final
+
+## API pública
+
+A partir do Sprint 9, o pacote `eizo` tem uma **superfície pública estável**
+(contrato de compatibilidade até 1.0.0 e depois). O que é público, o que é
+interno e a política de deprecation estão documentados em
+[docs/api.md](docs/api.md):
+
+- **API estável**: `eizo.graph.GraphStore`/`Node`/`Edge`/`GraphStats`/
+  `DEFINITION_KINDS`, `eizo.index_repository`, as funções de
+  `eizo.queries.*` (search/trace/why/impact/analysis/cycles/metrics/diff/
+  export) e `eizo.mcp.server.create_server`/`serve_mcp`.
+- **CLI estável por contrato de CLI**: comandos/opções são estáveis; o
+  módulo `eizo.cli` não é API Python.
+- **Internos** (mudam sem aviso): `eizo.graph.schema`, `eizo.graph.store`
+  (use o re-export), `eizo.parser.*`, `eizo.indexer` (use o re-export),
+  `eizo.static`, `eizo.__main__` e funções com prefixo `_`.
+
+**Deprecation policy**: mudanças que quebram a API estável seguem um ciclo
+de 2 versões — `DeprecationWarning` + registro no CHANGELOG na versão N,
+remoção na versão N+1. Exceções: segurança, bugs de comportamento indefinido
+e símbolos internos.
 
 ## Licença
 

@@ -1,4 +1,4 @@
-"""Testes para queries/diff.py — diff de símbolos contra um ref git."""
+"""Testes para queries/diff.py — diff de símbolos entre refs git."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from eizo.queries.diff import diff_against_ref
+from eizo.queries.diff import diff_against_ref, diff_between_refs
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -94,3 +94,73 @@ class TestDiffAgainstRef:
         result = diff_against_ref(git_repo, "base_ref")
 
         assert all(f["file"] != "README.md" for f in result["files"])
+
+
+class TestDiffBetweenRefs:
+    """Testa diff_between_refs() — comparação entre dois refs git."""
+
+    @pytest.fixture
+    def two_refs(self, git_repo: Path) -> tuple[Path, str, str]:
+        """git_repo já tem o commit base; cria branch ref_a e um 2º commit."""
+        _git(git_repo, "branch", "ref_a")
+        (git_repo / "lib.py").write_text("def helper():\n    return 42\n\ndef new_func():\n    pass\n")
+        _git(git_repo, "add", "lib.py")
+        _git(git_repo, "commit", "-q", "-m", "change")
+        return git_repo, "ref_a", "HEAD"
+
+    def test_diff_between_refs_with_changes(self, two_refs: Path) -> None:
+        repo, ref1, ref2 = two_refs
+
+        result = diff_between_refs(repo, ref1, ref2)
+
+        assert result["ref"] == "ref_a..HEAD"
+        assert len(result["files"]) == 1
+        entry = result["files"][0]
+        assert entry["file"] == "lib.py"
+        assert entry["status"] == "modified"
+        assert entry["added"] == [["new_func", "function"]]
+        assert entry["removed"] == [["old_func", "function"]]
+
+    def test_diff_between_same_refs_is_empty(self, two_refs: Path) -> None:
+        repo, ref1, _ref2 = two_refs
+
+        result = diff_between_refs(repo, ref1, ref1)
+
+        assert result["files"] == []
+
+    def test_diff_between_refs_new_file(self, two_refs: Path) -> None:
+        repo, ref1, _ref2 = two_refs
+        (repo / "extra.py").write_text("def extra_thing():\n    pass\n")
+        _git(repo, "add", "extra.py")
+        _git(repo, "commit", "-q", "-m", "extra")
+
+        result = diff_between_refs(repo, ref1, "HEAD")
+
+        entry = next(f for f in result["files"] if f["file"] == "extra.py")
+        assert entry["status"] == "added"
+        assert entry["added"] == [["extra_thing", "function"]]
+
+    def test_diff_between_refs_deleted_file(self, two_refs: Path) -> None:
+        repo, ref1, _ref2 = two_refs
+        (repo / "lib.py").unlink()
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-q", "-m", "delete lib")
+
+        result = diff_between_refs(repo, ref1, "HEAD")
+
+        entry = next(f for f in result["files"] if f["file"] == "lib.py")
+        assert entry["status"] == "removed"
+        assert {tuple(s) for s in entry["removed"]} == {("helper", "function"), ("old_func", "function")}
+
+    def test_diff_between_refs_nonexistent_ref_raises(self, two_refs: Path) -> None:
+        repo, _ref1, _ref2 = two_refs
+
+        with pytest.raises(RuntimeError, match="unknown revision|bad revision|ambiguous"):
+            diff_between_refs(repo, "ref_que_nao_existe", "HEAD")
+
+    def test_diff_between_refs_non_git_directory_raises(self, tmp_path: Path) -> None:
+        non_git = tmp_path / "plain"
+        non_git.mkdir()
+        (non_git / "a.py").write_text("x = 1\n")
+        with pytest.raises(RuntimeError):
+            diff_between_refs(non_git, "main", "HEAD")

@@ -44,7 +44,16 @@ def _node_to_dict(node: Any) -> dict[str, Any]:
 
 
 def create_server(store: GraphStore, port: int = 8765) -> FastMCP:
-    """Cria e configura o servidor MCP."""
+    """Cria e configura o servidor MCP.
+
+    Args:
+        store: GraphStore com o grafo de conhecimento.
+        port: Porta do transporte SSE (padrão: 8765).
+
+    Returns:
+        Instância `FastMCP` com as 8 tools registradas, pronta para
+        `mcp.run(transport=...)`.
+    """
     mcp = FastMCP("eizo", port=port)
 
     @mcp.tool()
@@ -66,6 +75,9 @@ def create_server(store: GraphStore, port: int = 8765) -> FastMCP:
                 + code_snippet, ranqueada por relevância — útil para buscar
                 por conteúdo mencionado em docstrings/código. Padrão (False)
                 busca por substring no nome, que cobre camelCase e snake_case.
+
+        Returns:
+            JSON string com lista de nós encontrados.
         """
         results = search_q.search_symbols(
             store, query, kind=kind, language=language, limit=_clamp_limit(limit), full_text=full_text
@@ -79,6 +91,9 @@ def create_server(store: GraphStore, port: int = 8765) -> FastMCP:
         Args:
             node_id: ID do nó no grafo.
             depth: Profundidade da vizinhança (1 = diretos, 2 = expandido).
+
+        Returns:
+            JSON string com node/incoming/outgoing/file_nodes.
         """
         result = search_q.get_symbol_context(store, node_id, depth=depth)
         return json.dumps(result, indent=2, default=str)
@@ -95,6 +110,9 @@ def create_server(store: GraphStore, port: int = 8765) -> FastMCP:
             symbol_name: Nome do símbolo.
             direction: incoming (quem chama), outgoing (quem é chamado), both.
             max_depth: Profundidade máxima (padrão: 5).
+
+        Returns:
+            JSON string com o caminho de chamadas.
         """
         result = trace_q.trace_call_path(store, symbol_name, direction=direction, max_depth=max_depth)
         return json.dumps(result, indent=2, default=str)
@@ -106,13 +124,21 @@ def create_server(store: GraphStore, port: int = 8765) -> FastMCP:
         Args:
             symbol_name: Nome do símbolo.
             max_depth: Profundidade máxima (padrão: 3).
+
+        Returns:
+            JSON string com a cadeia de impacto.
         """
         result = impact_q.analyze_impact(store, symbol_name, max_depth=max_depth)
         return json.dumps(result, indent=2, default=str)
 
     @mcp.tool()
     def get_architecture() -> str:
-        """Retorna visão arquitetural do repositório (estatísticas do grafo)."""
+        """Retorna visão arquitetural do repositório (estatísticas do grafo).
+
+        Returns:
+            JSON string com total_nodes, total_edges, total_files,
+            by_language, by_kind, by_edge_kind e db_size_bytes.
+        """
         stats = store.get_stats()
         return json.dumps({
             "total_nodes": stats.total_nodes,
@@ -131,6 +157,9 @@ def create_server(store: GraphStore, port: int = 8765) -> FastMCP:
         O diagrama mostra as camadas do sistema (CLI/MCP, queries, graph
         store, parsers, indexer) e as dependências entre elas derivadas do
         grafo de conhecimento.
+
+        Returns:
+            String no formato Mermaid (graph TD).
         """
         return export_q.export_architecture_mermaid(store)
 
@@ -145,6 +174,9 @@ def create_server(store: GraphStore, port: int = 8765) -> FastMCP:
             limit: Máximo de resultados (padrão: 100).
             entrypoints: Nomes de entrypoints a excluir (ex: ['main', 'serve']).
                 Se None, usa padrões: main, run, serve, app, create_app, etc.
+
+        Returns:
+            JSON string com lista de símbolos sem referências.
         """
         eps = frozenset(entrypoints) if entrypoints else None
         results = find_dead_code(store, entrypoints=eps, limit=_clamp_limit(limit))
@@ -160,6 +192,9 @@ def create_server(store: GraphStore, port: int = 8765) -> FastMCP:
         Args:
             limit: Máximo de resultados (padrão: 20).
             min_references: Mínimo de referências para aparecer (padrão: 2).
+
+        Returns:
+            JSON string com lista de símbolos mais referenciados.
         """
         results = find_hotspots(store, limit=_clamp_limit(limit), min_references=min_references)
         return json.dumps([
@@ -171,12 +206,15 @@ def create_server(store: GraphStore, port: int = 8765) -> FastMCP:
 
 
 def serve_mcp(store: GraphStore, port: int = 8765, transport: Literal["sse", "stdio"] = "sse") -> None:
-    """Inicia o servidor MCP.
+    """Inicia o servidor MCP (bloqueia até o servidor parar).
 
     Args:
         store: GraphStore com o grafo de conhecimento.
         port: Porta para transporte SSE (ignorado se transport='stdio').
         transport: Tipo de transporte — 'sse' (HTTP) ou 'stdio' (local).
+
+    Returns:
+        Nada — bloqueia executando o servidor até ele ser encerrado.
     """
     mcp = create_server(store, port)
     mcp.run(transport=transport)

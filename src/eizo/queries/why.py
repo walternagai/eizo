@@ -79,6 +79,12 @@ def find_dependency_path(
     direção encontrada é reportada — o caminho nunca é invertido
     artificialmente, pois isso implicaria arestas que não existem de fato.
 
+    Args:
+        store: GraphStore consultado.
+        symbol_a: Nome do primeiro símbolo (origem preferencial).
+        symbol_b: Nome do segundo símbolo (destino preferencial).
+        max_depth: Profundidade máxima da BFS (padrão: 10).
+
     Returns:
         Dict com:
         - "found": bool.
