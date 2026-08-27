@@ -30,7 +30,7 @@
 
 ## Requisitos
 
-- **Python 3.10+**
+- **Python 3.10+** (versões verificadas no CI: 3.10, 3.11, 3.12 e 3.13)
 - **Graphviz (opcional)**: necessário apenas para `eizo export svg` e
   `eizo export png` — é binário de sistema, não dependência Python:
   - Debian/Ubuntu: `apt install graphviz`
@@ -71,7 +71,8 @@ Notas:
 - Os parsers Tree-sitter (Python, TypeScript, Go, Rust, Java, C#, PHP, Ruby)
   têm wheels para Windows — não é necessário compilar nada.
 - O CI roda a suíte completa (lint + typecheck + testes + coverage) em
-  `windows-latest` a cada push/PR.
+  `ubuntu-latest`, `macos-latest` e `windows-latest`, com Python 3.10, 3.11,
+  3.12 e 3.13, a cada push/PR.
 
 ## Uso
 

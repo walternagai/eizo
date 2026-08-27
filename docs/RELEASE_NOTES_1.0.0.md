@@ -43,7 +43,7 @@ deprecation de duas versões.
 ## Instalação
 
 ```bash
-git clone https://github.com/walternagai/eizo.git
+git clone https://github.com/ninja-apps/eizo.git
 cd eizo
 make install
 # ou: pip install -e ".[dev]"

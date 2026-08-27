@@ -12,6 +12,11 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 - `GraphStore.upsert_node()` agora sincroniza o índice FTS5, assim como
   `upsert_nodes()`.
 
+### Alterado
+
+- Metadata de distribuição, matriz de Python, licença e documentação de
+  instalação alinhados com o status de API estável do projeto.
+
 ## [1.0.0] - 2026-08-10
 
 ### Adicionado

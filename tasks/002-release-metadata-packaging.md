@@ -1,6 +1,6 @@
 # TASK-002 — Alinhar metadata de release e empacotamento
 
-- **Status:** Backlog
+- **Status:** Concluída
 - **Prioridade:** P1
 - **Tipo:** Release engineering
 - **Release alvo:** 1.0.1
@@ -34,13 +34,13 @@ inconsistentes de projeto Alpha:
 
 ## Critérios de aceite
 
-- [ ] O metadata descreve uma única política de suporte coerente com o CI.
-- [ ] O pacote não se apresenta simultaneamente como Alpha e API estável.
-- [ ] `LICENSE` existe, contém a licença MIT e é incluído no artefato
+- [x] O metadata descreve uma única política de suporte coerente com o CI.
+- [x] O pacote não se apresenta simultaneamente como Alpha e API estável.
+- [x] `LICENSE` existe, contém a licença MIT e é incluído no artefato
       distribuído.
-- [ ] README, `pyproject.toml` e release notes apontam para o mesmo repositório.
-- [ ] A suíte não emite o warning de escopo padrão do pytest-asyncio.
-- [ ] A versão reportada por `python -m eizo --version` coincide com a versão
+- [x] README, `pyproject.toml` e release notes apontam para o mesmo repositório.
+- [x] A suíte não emite o warning de escopo padrão do pytest-asyncio.
+- [x] A versão reportada por `python -m eizo --version` coincide com a versão
       do pacote construído.
 
 ## Verificação
