@@ -1,6 +1,6 @@
 # TASK-004 — Expandir fuzzing para os oito parsers
 
-- **Status:** Backlog
+- **Status:** Concluída
 - **Prioridade:** P2
 - **Tipo:** Robustez
 - **Release alvo:** 1.1.0
@@ -25,14 +25,14 @@ controle e entradas aleatórias.
 
 ## Critérios de aceite
 
-- [ ] Os oito parsers aparecem no teste fuzz e executam no CI completo.
-- [ ] Inputs vazios, inválidos, com Unicode, caracteres de controle e casos
+- [x] Os oito parsers aparecem no teste fuzz e executam no CI completo.
+- [x] Inputs vazios, inválidos, com Unicode, caracteres de controle e casos
       específicos de cada linguagem não causam crash.
-- [ ] A seed continua reproduzindo exatamente os mesmos casos em cada execução.
-- [ ] O teste mantém as invariantes mínimas: listas de nós/arestas e nó de
+- [x] A seed continua reproduzindo exatamente os mesmos casos em cada execução.
+- [x] O teste mantém as invariantes mínimas: listas de nós/arestas e nó de
       arquivo quando aplicável.
-- [ ] Nenhuma exceção é escondida com `xfail`, `skip` ou `except` no teste.
-- [ ] A cobertura global continua acima de 70% e o tempo do CI permanece
+- [x] Nenhuma exceção é escondida com `xfail`, `skip` ou `except` no teste.
+- [x] A cobertura global continua acima de 70% e o tempo do CI permanece
       aceitável.
 
 ## Verificação

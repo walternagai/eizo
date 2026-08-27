@@ -14,9 +14,13 @@ from pathlib import Path
 
 import pytest
 
+from eizo.parser.base import BaseParser
+from eizo.parser.csharp import CSharpParser
 from eizo.parser.go import GoParser
 from eizo.parser.java import JavaParser
+from eizo.parser.php import PhpParser
 from eizo.parser.python import PythonParser
+from eizo.parser.ruby import RubyParser
 from eizo.parser.rust import RustParser
 from eizo.parser.typescript import TypeScriptParser
 
@@ -25,16 +29,46 @@ from eizo.parser.typescript import TypeScriptParser
 FUZZ_SEED = 42
 FUZZ_CASES = 50
 
-# Arquivo sintético: o parser só usa file_path para gerar ids e o nome do
-# nó 'file' — um path inexistente nunca é aberto.
-FAKE_PATH = Path("fuzz_input.rs")
+# Arquivos sintéticos: os parsers só usam file_path para gerar ids e o nome do
+# nó 'file' — paths inexistentes nunca são abertos.
+FAKE_PATHS = {
+    "csharp": Path("fuzz_input.cs"),
+    "go": Path("fuzz_input.go"),
+    "java": Path("fuzz_input.java"),
+    "php": Path("fuzz_input.php"),
+    "python": Path("fuzz_input.py"),
+    "ruby": Path("fuzz_input.rb"),
+    "rust": Path("fuzz_input.rs"),
+    "typescript": Path("fuzz_input.ts"),
+}
 
-PARSERS: dict[str, object] = {
+PARSERS: dict[str, type[BaseParser]] = {
+    "csharp": CSharpParser,
     "python": PythonParser,
     "typescript": TypeScriptParser,
     "go": GoParser,
     "rust": RustParser,
     "java": JavaParser,
+    "php": PhpParser,
+    "ruby": RubyParser,
+}
+
+# Casos adicionais exercitam delimitadores e construções que cada gramática
+# trata de forma diferente. Continuam sendo entradas deliberadamente
+# incompletas: o parser deve devolver uma árvore parcial, não levantar exceção.
+LANGUAGE_MALFORMED_CASES: dict[str, list[str]] = {
+    "csharp": [
+        "namespace Demo { class Broken { public void Run( { }",
+        "using System; class C : { }",
+    ],
+    "php": [
+        "<?php class Broken { public function run( { }",
+        "<?php namespace Demo; function broken( {",
+    ],
+    "ruby": [
+        "class Broken\n  def run(\n",
+        "module Demo\n  def self.build\n",
+    ],
 }
 
 # Casos malformados conhecidos (sintaxe quebrada deliberadamente) — o
@@ -140,9 +174,9 @@ def test_parser_does_not_crash_on_malformed_input(language: str) -> None:
     parser_cls = PARSERS[language]
     parser = parser_cls()
     rng = random.Random(FUZZ_SEED)
-    inputs = MALFORMED_CASES + _random_cases(rng)
+    inputs = MALFORMED_CASES + LANGUAGE_MALFORMED_CASES.get(language, []) + _random_cases(rng)
     for source in inputs:
-        nodes, edges = parser.parse_file(FAKE_PATH, source)
+        nodes, edges = parser.parse_file(FAKE_PATHS[language], source)
         assert isinstance(nodes, list)
         assert isinstance(edges, list)
         assert len(nodes) >= 1  # pelo menos o nó 'file'

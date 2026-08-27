@@ -9,7 +9,7 @@ robustez e cobertura.
 | [TASK-001](001-fix-fts-upsert-node.md) | P0 | 1.0.1 | Corrigir sincronização FTS no `upsert_node()` | Concluída |
 | [TASK-002](002-release-metadata-packaging.md) | P1 | 1.0.1 | Alinhar metadata, licença e empacotamento | Concluída |
 | [TASK-003](003-public-api-contract-tests.md) | P1 | 1.0.1 | Criar testes de contrato da API pública | Concluída |
-| [TASK-004](004-parser-fuzz-eight-languages.md) | P2 | 1.1.0 | Expandir fuzzing para os oito parsers | Backlog |
+| [TASK-004](004-parser-fuzz-eight-languages.md) | P2 | 1.1.0 | Expandir fuzzing para os oito parsers | Concluída |
 
 ## Sequenciamento
 
