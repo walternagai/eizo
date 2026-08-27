@@ -42,6 +42,47 @@ class TestGraphStoreExtended:
         assert retrieved.metadata["abstract"] is True
         assert retrieved.metadata["decorators"] == ["@dataclass"]
 
+    def test_upsert_node_synchronizes_fts_on_insert_and_update(self, store) -> None:
+        """upsert unitário deve manter o FTS sincronizado."""
+        first = Node(
+            id="single",
+            name="fts_single_term",
+            kind="function",
+            file_path="a.py",
+            language="python",
+            docstring="first_doc_term",
+            code_snippet="first_code_term",
+        )
+        store.upsert_node(first)
+
+        assert [node.id for node in store.search_nodes_fts("fts_single_term")] == ["single"]
+        assert [node.id for node in store.search_nodes_fts("first_doc_term")] == ["single"]
+        assert [node.id for node in store.search_nodes_fts("first_code_term")] == ["single"]
+        assert store.conn.execute("SELECT count(*) FROM nodes_fts").fetchone()[0] == 1
+
+        updated = Node(
+            id="single",
+            name="fts_updated_term",
+            kind="function",
+            file_path="a.py",
+            language="python",
+            docstring="updated_doc_term",
+            code_snippet="updated_code_term",
+        )
+        store.upsert_node(updated)
+
+        assert store.search_nodes_fts("fts_single_term") == []
+        assert store.search_nodes_fts("first_doc_term") == []
+        assert store.search_nodes_fts("first_code_term") == []
+        assert [node.id for node in store.search_nodes_fts("fts_updated_term")] == ["single"]
+        assert [node.id for node in store.search_nodes_fts("updated_doc_term")] == ["single"]
+        assert [node.id for node in store.search_nodes_fts("updated_code_term")] == ["single"]
+        assert store.conn.execute("SELECT count(*) FROM nodes_fts").fetchone()[0] == 1
+
+        store.delete_nodes_by_file("a.py")
+        assert store.search_nodes_fts("fts_updated_term") == []
+        assert store.conn.execute("SELECT count(*) FROM nodes_fts").fetchone()[0] == 0
+
     def test_upsert_edges_batch(self, store) -> None:
         """Inserção em lote de arestas."""
         store.upsert_node(Node(id="a", name="a", kind="function", file_path="a.py", language="python"))

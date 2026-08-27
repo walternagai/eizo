@@ -1,6 +1,6 @@
 # TASK-001 — Corrigir sincronização FTS em `upsert_node()`
 
-- **Status:** Backlog
+- **Status:** Concluída
 - **Prioridade:** P0
 - **Tipo:** Bug de API pública
 - **Release alvo:** 1.0.1
@@ -31,14 +31,14 @@ store.search_nodes_fts("fts_unique_term")  # retorna []
 
 ## Critérios de aceite
 
-- [ ] `upsert_node()` torna o nó imediatamente pesquisável por nome,
+- [x] `upsert_node()` torna o nó imediatamente pesquisável por nome,
       docstring e `code_snippet` via `search_nodes_fts()`.
-- [ ] Atualizar o mesmo nó não deixa conteúdo antigo nem linhas FTS órfãs.
-- [ ] `delete_nodes_by_file()` remove também a entrada FTS criada pelo caminho
+- [x] Atualizar o mesmo nó não deixa conteúdo antigo nem linhas FTS órfãs.
+- [x] `delete_nodes_by_file()` remove também a entrada FTS criada pelo caminho
       unitário.
-- [ ] O comportamento já coberto de `upsert_nodes()` permanece inalterado,
+- [x] O comportamento já coberto de `upsert_nodes()` permanece inalterado,
       inclusive para IDs duplicados no mesmo lote.
-- [ ] A documentação da API continua refletindo o comportamento implementado.
+- [x] A documentação da API continua refletindo o comportamento implementado.
 
 ## Verificação
 

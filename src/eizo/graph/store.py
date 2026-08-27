@@ -117,24 +117,9 @@ class GraphStore:
         Returns:
             Nada.
         """
-        self.conn.execute(
-            """INSERT OR REPLACE INTO nodes
-               (id, name, kind, file_path, language, line_start, line_end, docstring, code_snippet, metadata)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                node.id,
-                node.name,
-                node.kind,
-                node.file_path,
-                node.language,
-                node.line_start,
-                node.line_end,
-                node.docstring,
-                node.code_snippet,
-                json.dumps(node.metadata, default=str),
-            ),
-        )
-        self.conn.commit()
+        # Usa o mesmo caminho de `upsert_nodes` para manter nodes e nodes_fts
+        # sincronizados também nas inserções unitárias.
+        self.upsert_nodes([node])
 
     def upsert_nodes(self, nodes: list[Node]) -> None:
         """Insere ou atualiza múltiplos nós em lote.
