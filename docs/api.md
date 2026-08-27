@@ -105,11 +105,18 @@ export_png(store, kind=None, language=None, limit=None, edge_kinds=None) -> byte
 export_architecture_mermaid(store) -> str
 ```
 
+`export_json` retorna um objeto JSON com duas chaves: `nodes` e `edges`. Cada
+nó contém `id`, `name`, `kind`, `file_path`, `language`, `line_start`,
+`line_end` e `docstring`; cada aresta contém `source_id`, `target_id` e
+`kind`.
+
 > `export_svg`/`export_png` renderizam via binário `dot` (graphviz) e
 > levantam `RuntimeError` se ele não estiver instalado. Graphviz é
 > dependência opcional de sistema — ver README, seção Requisitos.
 
 ## `eizo.mcp.server`
+
+Funções públicas estáveis: `create_server` e `serve_mcp`.
 
 ```python
 create_server(store, port=8765) -> FastMCP

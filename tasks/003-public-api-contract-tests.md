@@ -1,6 +1,6 @@
 # TASK-003 — Criar testes de contrato da API pública
 
-- **Status:** Backlog
+- **Status:** Concluída
 - **Prioridade:** P1
 - **Tipo:** Qualidade / compatibilidade
 - **Release alvo:** 1.0.1
@@ -30,14 +30,14 @@ mantida manualmente.
 
 ## Critérios de aceite
 
-- [ ] Remover ou renomear um símbolo listado em `__all__` faz a suíte falhar.
-- [ ] Todos os exports documentados em `docs/api.md` são exercitados por pelo
+- [x] Remover ou renomear um símbolo listado em `__all__` faz a suíte falhar.
+- [x] Todos os exports documentados em `docs/api.md` são exercitados por pelo
       menos um teste de importação ou comportamento.
-- [ ] Os 16 comandos CLI e o alias `architecture` ficam protegidos por teste.
-- [ ] Os formatos JSON testados mantêm seus campos públicos documentados.
-- [ ] Os testes não congelam módulos internos, funções privadas ou detalhes de
+- [x] Os 16 comandos CLI e o alias `architecture` ficam protegidos por teste.
+- [x] Os formatos JSON testados mantêm seus campos públicos documentados.
+- [x] Os testes não congelam módulos internos, funções privadas ou detalhes de
       implementação não prometidos.
-- [ ] A cobertura permanece acima de 70%.
+- [x] A cobertura permanece acima de 70%.
 
 ## Verificação
 
