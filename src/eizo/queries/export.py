@@ -29,7 +29,12 @@ def _fetch_nodes(
     language: str | None = None,
     limit: int | None = None,
 ) -> list[Node]:
-    """Busca nós com filtros opcionais."""
+    """Busca nós com filtros opcionais, em ordem determinística.
+
+    ORDER BY (file_path, name, id): sem ele, a ordem vem do scan de rowids —
+    que INSERT OR REPLACE reatribui — e dois exports do mesmo grafo não fazem
+    diff estável.
+    """
     sql = "SELECT * FROM nodes WHERE 1=1"
     params: list[Any] = []
 
@@ -39,6 +44,7 @@ def _fetch_nodes(
     if language:
         sql += " AND language = ?"
         params.append(language)
+    sql += " ORDER BY file_path, name, id"
     if limit:
         sql += " LIMIT ?"
         params.append(limit)
@@ -53,6 +59,9 @@ def _fetch_edges_for_nodes(store: GraphStore, node_ids: set[str]) -> list[Edge]:
     O IN é quebrado em batches de 500 ids: SQLite tem limite de variáveis
     (SQLITE_MAX_VARIABLE_NUMBER, tipicamente 999) e grafos grandes
     (10k+ nós) estouram o limite ou degradam para um scan lento.
+
+    Arestas retornam em ordem determinística (source_id, target_id, kind) —
+    mesmo racional do ORDER BY de _fetch_nodes.
     """
     if not node_ids:
         return []
@@ -66,6 +75,7 @@ def _fetch_edges_for_nodes(store: GraphStore, node_ids: set[str]) -> list[Edge]:
             SELECT * FROM edges
             WHERE source_id IN ({placeholders})
               AND target_id IN ({placeholders})
+            ORDER BY source_id, target_id, kind
         """
         rows = store.conn.execute(sql, batch + batch).fetchall()
         edges.extend(store._row_to_edge(r) for r in rows)
@@ -75,6 +85,17 @@ def _fetch_edges_for_nodes(store: GraphStore, node_ids: set[str]) -> list[Edge]:
 def _sanitize_dot_id(node_id: str) -> str:
     """Sanitiza ID para DOT ( alphanumeric + underscore)."""
     return "n_" + node_id.replace("-", "_")
+
+
+def _escape_dot_label(label: str) -> str:
+    """Escapa um label para string DOT entre aspas.
+
+    DOT escapa com backslash: `"` → `\\"`, `\\` → `\\\\`, e quebras de
+    linha → `\\n` (escapes de string DOT). Sem isso, um símbolo com aspas
+    no nome produz DOT inválido — e export_svg/export_png herdam o erro via
+    export_dot.
+    """
+    return label.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r")
 
 
 def export_dot(
@@ -115,7 +136,7 @@ def export_dot(
     lines.append("  // Nós")
     for n in nodes:
         dot_id = _sanitize_dot_id(n.id)
-        label = n.name
+        label = _escape_dot_label(n.name)
         # Estilo por kind
         if n.kind == "class":
             shape = "box"
@@ -270,22 +291,27 @@ def export_mermaid(
         methods = [n for n in nodes if n.kind == "method"]
         functions = [n for n in nodes if n.kind == "function"]
 
+        # Nomes vão para comentários %% — newline/aspas no nome quebram o
+        # diagrama; a sanitização mantém o comentário numa linha só.
+        def _comment_text(name: str) -> str:
+            return name.replace("\n", " ").replace("\r", " ").replace('"', "'")
+
         for c in classes:
             safe_id = _mermaid_safe_id(c.id)
             lines.append(f"  class {safe_id} {{")
-            lines.append(f'    %% {c.name}')
+            lines.append(f'    %% {_comment_text(c.name)}')
             lines.append("  }")
 
         for m in methods:
             safe_id = _mermaid_safe_id(m.id)
             lines.append(f"  class {safe_id} {{")
-            lines.append(f'    %% {m.name}()')
+            lines.append(f'    %% {_comment_text(m.name)}()')
             lines.append("  }")
 
         for f in functions:
             safe_id = _mermaid_safe_id(f.id)
             lines.append(f"  class {safe_id} {{")
-            lines.append(f'    %% {f.name}()')
+            lines.append(f'    %% {_comment_text(f.name)}()')
             lines.append("  }")
 
         # Arestas

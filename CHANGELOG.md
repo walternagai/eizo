@@ -35,6 +35,14 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
   C#, PHP, Ruby), com a constante única `MAX_AST_DEPTH` em `parser/base.py`;
   os pre-scans de Go/Rust passam a percorrer a AST iterativamente (rodavam
   recursivamente antes do guard).
+- Export do grafo é determinístico: `_fetch_nodes`/`_fetch_edges_for_nodes`
+  ordenam por chaves estáveis (file_path/name/id e source/target/kind) —
+  dois exports do mesmo grafo fazem diff estável mesmo depois de re-indexar
+  (INSERT OR REPLACE reatribuía rowids e embaralhava a ordem).
+- Labels de DOT escapam `"`, `\` e quebras de linha (símbolo com aspas no
+  nome não produz mais DOT inválido — export_svg/export_png herdam a
+  correção via export_dot); nomes com newline não quebram mais os comentários
+  `%%` do classDiagram Mermaid.
 - `find_hotspots()` retorna `list[Node]` conforme o contrato de docs/api.md
   (a contagem fica em `metadata["reference_count"]` do nó); antes retornava
   `list[dict]`, divergindo da API estável documentada.

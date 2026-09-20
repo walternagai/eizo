@@ -559,3 +559,91 @@ class TestExportArchitectureMermaid:
         assert "comp_queries_search_py" in result
         assert "comp_graph_store_py" in result
         s.close()
+
+
+# ─── Determinismo e escaping (P2 da revisão repo-full-review) ──
+
+
+class TestExportDeterminism:
+    """Dois exports do mesmo grafo produzem a MESMA string."""
+
+    def _make_store(self, tmp_path: Path) -> GraphStore:
+        store = GraphStore(tmp_path)
+        store.upsert_nodes([
+            Node(id="a1", name="zebra", kind="function", file_path="b.py", language="python", line_start=1, line_end=1),
+            Node(id="a2", name="alpha", kind="function", file_path="b.py", language="python", line_start=2, line_end=2),
+            Node(id="a3", name="beta", kind="function", file_path="a.py", language="python", line_start=1, line_end=1),
+            Node(
+                id="a4", name="caller", kind="function", file_path="c.py",
+                language="python", line_start=1, line_end=1,
+            ),
+        ])
+        store.upsert_edges([
+            Edge(source_id="a4", target_id="a1", kind="calls"),
+            Edge(source_id="a4", target_id="a2", kind="calls"),
+            Edge(source_id="a3", target_id="a1", kind="calls"),
+        ])
+        return store
+
+    def test_json_deterministic(self, tmp_path: Path) -> None:
+        """export_json: mesma string em duas chamadas no mesmo store."""
+        store = self._make_store(tmp_path)
+        assert export_json(store) == export_json(store)
+
+    def test_json_deterministic_after_reupsert(self, tmp_path: Path) -> None:
+        """Re-upsert (INSERT OR REPLACE reatribui rowid) não muda o export."""
+        store = self._make_store(tmp_path)
+        # Nota: re-upsert de um nó apaga arestas incidentes (FK CASCADE no
+        # REPLACE — defeito conhecido, fora do escopo desta task); re-upsert
+        # só valida a estabilidade da ORDENAÇÃO, sem arestas incidentes.
+        store.upsert_nodes([
+            Node(id="a5", name="delta", kind="function", file_path="d.py", language="python", line_start=1, line_end=1),
+            Node(id="a6", name="echo", kind="function", file_path="d.py", language="python", line_start=2, line_end=2),
+        ])
+        before = export_json(store)
+        store.upsert_nodes([
+            Node(id="a5", name="delta", kind="function", file_path="d.py", language="python", line_start=1, line_end=1),
+            Node(id="a6", name="echo", kind="function", file_path="d.py", language="python", line_start=2, line_end=2),
+        ])
+        assert export_json(store) == before
+
+    def test_json_ordering_is_file_then_name(self, tmp_path: Path) -> None:
+        """Ordem estável: file_path depois name (não rowid)."""
+        store = self._make_store(tmp_path)
+        data = json.loads(export_json(store))
+        names = [n["name"] for n in data["nodes"]]
+        assert names == ["beta", "alpha", "zebra", "caller"]
+
+    def test_dot_and_mermaid_deterministic(self, tmp_path: Path) -> None:
+        """dot e mermaid usam os mesmos fetchers — também estáveis."""
+        store = self._make_store(tmp_path)
+        assert export_dot(store) == export_dot(store)
+        assert export_mermaid(store) == export_mermaid(store)
+
+
+class TestDotLabelEscaping:
+    """Labels DOT com caracteres especiais produzem DOT válido."""
+
+    def test_quotes_backslash_newline_escaped(self, tmp_path: Path) -> None:
+        store = GraphStore(tmp_path)
+        store.upsert_nodes([
+            Node(id="x1", name='we"ird\\name', kind="function", file_path="x.py",
+                 language="python", line_start=1, line_end=1),
+            Node(id="x2", name="line\nbreak", kind="function", file_path="x.py",
+                 language="python", line_start=2, line_end=2),
+        ])
+        result = export_dot(store)
+        # Nenhuma aspa crua do nome dentro do label — todas escapadas
+        assert 'label="we\\"ird\\\\name"' in result
+        assert 'label="line\\nbreak"' in result
+
+    def test_mermaid_class_diagram_comment_newline(self, tmp_path: Path) -> None:
+        """Nome com newline não quebra o comentário %% do classDiagram."""
+        store = GraphStore(tmp_path)
+        store.upsert_nodes([
+            Node(id="y1", name="My\nClass", kind="class", file_path="y.py",
+                 language="python", line_start=1, line_end=1),
+        ])
+        result = export_mermaid(store, diagram_type="classDiagram")
+        assert "%% My Class" in result  # newline virou espaço
+        assert "My\nClass" not in result
