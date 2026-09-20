@@ -7,6 +7,10 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 
 ## [Unreleased]
 
+_Nada — as correções abaixo foram incluídas na release 1.0.1._
+
+## [1.0.1] - 2026-09-20
+
 ### Corrigido
 
 - `GraphStore.upsert_node()` agora sincroniza o índice FTS5, assim como
@@ -137,3 +141,5 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 - Servidor **MCP** (8 ferramentas) com transporte SSE e stdio
 - Busca textual e full-text (FTS5)
 - Call graph (`eizo trace`), análise de impacto (`eizo impact`), visão arquitetural (`eizo arch`)
+
+[1.0.1]: https://github.com/walternagai/eizo/compare/1.0.0...1.0.1

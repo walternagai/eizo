@@ -59,14 +59,20 @@ CRUD no SQLite do grafo de conhecimento. Métodos públicos (estáveis):
 - `conn` — conexão SQLite (aberta sob demanda).
 - `close()` — fecha a conexão (idempotente).
 - `upsert_node(node)`, `upsert_nodes(nodes)` — persistência em lote com
-  sincronização FTS5 por rowid determinístico.
+  sincronização FTS5 por rowid determinístico. O upsert é real
+  (`ON CONFLICT DO UPDATE`): atualizar um nó existente **preserva as
+  arestas incidentes** e mantém a semântica "última escrita vence".
 - `get_node(node_id)`, `get_nodes_by_name(name, kind=None)`,
-  `get_nodes_by_file(file_path)` — leitura de nós.
+  `get_nodes_by_file(file_path)` — leitura de nós. Leituras de resolução
+  (`get_nodes_by_name`, resolução de call sites) são **cacheadas por
+  instância** e invalidadas a cada escrita — resultados idênticos, custo
+  menor nas queries de análise.
 - `search_nodes(query, kind=None, language=None, limit=50)` — busca por
   nome (LIKE), priorizando match exato e definições.
 - `search_nodes_fts(query, kind=None, language=None, limit=50)` — busca
   full-text (FTS5) ranqueada por relevância.
-- `delete_nodes_by_file(file_path)`, `clear_all()` — remoção.
+- `delete_nodes_by_file(file_path)`, `clear_all()` — remoção. Escritas
+  multi-statement são atômicas (rollback em exceção).
 - `get_file_index_entry(file_path)`, `upsert_file_index(...)`,
   `get_indexed_files()`, `delete_file_index(file_path)`,
   `is_file_unchanged(file_path, content_hash)` — índice incremental.
@@ -109,6 +115,13 @@ export_architecture_mermaid(store) -> str
 nó contém `id`, `name`, `kind`, `file_path`, `language`, `line_start`,
 `line_end` e `docstring`; cada aresta contém `source_id`, `target_id` e
 `kind`.
+
+Todos os exportadores (`export_dot`/`export_mermaid`/`export_json` e os
+renderizados) são **determinísticos**: nós em ordem (file_path, name, id) e
+arestas em (source_id, target_id, kind) — dois exports do mesmo grafo
+produzem a mesma saída, e re-indexar não muda a ordem. Labels de DOT escapam
+`"`, `\` e quebras de linha; nomes com newline não quebram o classDiagram
+Mermaid.
 
 > `export_svg`/`export_png` renderizam via binário `dot` (graphviz) e
 > levantam `RuntimeError` se ele não estiver instalado. Graphviz é

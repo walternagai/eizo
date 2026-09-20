@@ -1,6 +1,6 @@
 # Eizō (映像) — Codebase Knowledge Graph CLI
 
-[![CI](https://img.shields.io/github/actions/workflow/status/ninja-apps/eizo/ci.yml?branch=main&label=CI&logo=github)](https://github.com/ninja-apps/eizo/actions)
+[![CI](https://img.shields.io/github/actions/workflow/status/walternagai/eizo/ci.yml?branch=main&label=CI&logo=github)](https://github.com/walternagai/eizo/actions)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -39,9 +39,20 @@
 
 ## Instalação
 
+### Do PyPI (recomendado)
+
+```bash
+pip install eizo
+```
+
+Graphviz é opcional — necessário apenas para `eizo export svg` e
+`eizo export png` (binário de sistema; ver Requisitos acima).
+
+### Do código-fonte (desenvolvimento)
+
 ```bash
 # Clone o repositório
-git clone https://github.com/ninja-apps/eizo.git
+git clone https://github.com/walternagai/eizo.git
 cd eizo
 
 # Instale com dependências de desenvolvimento
@@ -605,6 +616,7 @@ eizo/
 │   ├── static/              # Assets do HTML export
 │   │   └── vendor/          # vis-network, etc.
 │   └── mcp/
+│       ├── __init__.py      # Marcador de pacote (wheel)
 │       └── server.py        # Servidor MCP (8 tools)
 ├── tests/
 │   ├── conftest.py
@@ -623,6 +635,7 @@ eizo/
 │   ├── test_main.py
 │   ├── test_mcp_server.py
 │   ├── test_models.py
+│   ├── test_p1_fixes.py
 │   ├── test_parser_base.py
 │   ├── test_parser_go.py
 │   ├── test_parser_go_extended.py
@@ -641,6 +654,7 @@ eizo/
 │   ├── test_parser_typescript.py
 │   ├── test_parser_typescript_extended.py
 │   ├── test_parser_fuzz.py
+│   ├── test_public_api.py
 │   ├── test_queries_cycles.py
 │   ├── test_queries_diff.py
 │   ├── test_queries_extended.py
@@ -660,10 +674,11 @@ eizo/
 
 ## Roadmap
 
-- **Fase 1 (Sprint 8) — Robustez**: captura de chamadas dentro de macros Rust, fuzzing dos parsers, benchmark com 10k+ arquivos
-- **Fase 2 (Sprint 9) — API pública estável**: congelamento da API, docs de API, diff entre branches
-- **Fase 3 (Sprint 10) — Mais linguagens**: parsers C#/PHP/Ruby, suporte nativo a Windows
+- **Fase 1 (Sprint 8) — Robustez**: captura de chamadas dentro de macros Rust, fuzzing dos parsers, benchmark com 10k+ arquivos ✅
+- **Fase 2 (Sprint 9) — API pública estável**: congelamento da API, docs de API, diff entre branches ✅
+- **Fase 3 (Sprint 10) — Mais linguagens**: parsers C#/PHP/Ruby, suporte nativo a Windows ✅
 - **Fase 4 (Sprint 11) — Release 1.0.0**: export SVG/PNG, changelog consolidado, tag final ✅
+- **Fase 5 — 1.0.1**: revisão gauntlet completa (11 componentes), 6 lotes de correções (P0/P1/P2), primeiro pacote pronto para o PyPI ✅
 
 ## API pública
 

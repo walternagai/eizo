@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "eizo"
-version = "1.0.0"
+version = "1.0.1"
 description = "映像 — Codebase Knowledge Graph CLI. Parseia codebases com Tree-sitter, constrói grafo de conhecimento em SQLite, expõe queries via CLI e MCP."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -68,8 +68,10 @@ dev = [
 eizo = "eizo.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/ninja-apps/eizo"
-Repository = "https://github.com/ninja-apps/eizo"
+Homepage = "https://github.com/walternagai/eizo"
+Repository = "https://github.com/walternagai/eizo"
+Changelog = "https://github.com/walternagai/eizo/blob/main/CHANGELOG.md"
+Issues = "https://github.com/walternagai/eizo/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]

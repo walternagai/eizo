@@ -317,6 +317,18 @@ src/eizo/
   REPLACE deletes+reinserts the row and the FK `ON DELETE CASCADE` then wipes
   every edge incident to that node. Minified files put every symbol on one
   line, so `file:name:line` collides by the thousands inside a single file.
+- **Multi-statement writers are atomic**: `upsert_nodes`, `delete_nodes_by_file`
+  and `clear_all` run inside `GraphStore._transaction()` — commit on success,
+  rollback + re-raise on exception (a concurrent lock mid-sequence no longer
+  leaves a transaction open for the *next* commit to persist a partial batch
+  with out-of-sync FTS).
+- **Read caches, invalidated on every write**: `get_nodes_by_name` results and
+  stub resolution (`_resolve_named_stub`) are memoized per `GraphStore`
+  instance (never global) and cleared in `_invalidate_cache()` on every
+  committed write. This is what keeps `find_hotspots`/`find_dead_code` from
+  re-resolving same-named call sites per definition (measured 3.2× fewer name
+  lookups with 12 homonymous defs). If you add a writer, it must go through
+  `_transaction()` (or call `_invalidate_cache()` after commit).
 - Schema migration: `migrate_db()` upgrades v1 → v2 (adds file_index +
   nodes_fts) and v2 → v3 (rebuilds nodes_fts with deterministic rowids).
 
@@ -336,7 +348,7 @@ src/eizo/
   bounded number of iterations through `CliRunner` without hanging the suite.
 - Coverage gate: 70%.
 - `cli.py`: 99% coverage; `__main__.py`: 100% coverage.
-- 755 tests total. Test files include: `test_cli.py`, `test_main.py`, `test_indexer.py`,
+- 774 tests total. Test files include: `test_cli.py`, `test_main.py`, `test_indexer.py`,
   `test_indexer_extended.py`, `test_incremental.py`, `test_analysis.py`, `test_export.py`,
   `test_export_html.py`, `test_queries_extended.py`, `test_store_extended.py`,
   `test_parser_python.py`, `test_parser_python_extended.py`,
