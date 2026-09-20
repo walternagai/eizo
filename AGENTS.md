@@ -92,6 +92,12 @@ a `docs/api.md`; remoção/renome de símbolo público exige o deprecation cycle
   - `EIZO_MIN_REFS` — default for `--min-refs` in `hotspots`.
   - `EIZO_FULL_TEXT` — default for `--full-text` in `search`.
 - Merge priority: **CLI args > env vars > config file > Click defaults**.
+- `EIZO_REPO` is honored by **every** command that accepts `--repo`/`-C`
+  (including `init` and `watch`) and applies only when neither `--repo` nor
+  the positional `PATH` was passed. Numeric values from `EIZO_*` or the
+  config file are validated against the same ranges as the CLI options
+  (`depth` 1..10, `limit`/`min_refs` >= 1); out-of-range values emit a
+  warning and fall back to the default.
 
 ## Color output
 

@@ -11,6 +11,12 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 
 - `GraphStore.upsert_node()` agora sincroniza o índice FTS5, assim como
   `upsert_nodes()`.
+- `EIZO_REPO` agora é respeitado por `eizo init` e `eizo watch` (antes,
+  indexavam/observavam o diretório atual ignorando a variável).
+- Valores de `depth`/`limit`/`min_refs` vindos de `EIZO_*` ou de
+  `.eizo/config.json` agora são validados nas mesmas faixas do CLI
+  (`depth` 1..10, `limit`/`min_refs` >= 1); fora da faixa, emite aviso e
+  usa o default em vez de aplicar o valor silenciosamente.
 
 ### Alterado
 

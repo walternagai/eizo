@@ -590,6 +590,92 @@ class TestCliEnvVars:
         # basta confirmar que não houve erro e há resultados.
         assert "resultado(s)" in result.output
 
+    def test_env_depth_out_of_range_falls_back_with_warning(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """EIZO_DEPTH=0 (fora da faixa 1..10) cai no default com aviso."""
+        repo = Path(tmp_path)
+        (repo / "a.py").write_text("def a(): pass\n")
+        store = GraphStore(repo)
+        index_repository(repo, store)
+
+        monkeypatch.setenv("EIZO_DEPTH", "0")
+        runner = CliRunner()
+        result = runner.invoke(main, ["--output-format", "json", "trace", "a", "--repo", str(repo)])
+        assert result.exit_code == 0
+        assert "fora da faixa" in result.output
+        # O aviso e o JSON compartilham a stdout; basta confirmar que o trace
+        # rodou com o default (3) em vez de falhar com depth=0.
+        assert '"name": "a"' in result.output
+
+    def test_env_min_refs_out_of_range_falls_back_with_warning(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """EIZO_MIN_REFS=0 (fora da faixa >=1) cai no default com aviso."""
+        repo = Path(tmp_path)
+        (repo / "a.py").write_text("def a(): pass\n")
+        store = GraphStore(repo)
+        index_repository(repo, store)
+
+        monkeypatch.setenv("EIZO_MIN_REFS", "0")
+        runner = CliRunner()
+        result = runner.invoke(main, ["hotspots", "--min-refs", "2", "--repo", str(repo)])
+        assert result.exit_code == 0
+        assert "fora da faixa" in result.output
+
+    def test_config_depth_out_of_range_falls_back_with_warning(self, tmp_path: Path) -> None:
+        """config.json com depth fora da faixa cai no default com aviso."""
+        repo = Path(tmp_path)
+        (repo / "a.py").write_text("def a(): pass\n")
+        store = GraphStore(repo)
+        index_repository(repo, store)
+
+        eizo_dir = repo / ".eizo"
+        eizo_dir.mkdir(exist_ok=True)
+        (eizo_dir / "config.json").write_text(json.dumps({"depth": 100}))
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["--output-format", "json", "trace", "a", "--repo", str(repo)])
+        assert result.exit_code == 0
+        assert "fora da faixa" in result.output
+        # O aviso e o JSON compartilham a stdout; basta confirmar que o trace
+        # rodou com o default (3) em vez de falhar com depth=100.
+        assert '"name": "a"' in result.output
+
+    def test_env_repo_init(self, tmp_path: Path, monkeypatch: Any) -> None:
+        """EIZO_REPO define o repo para init (sem --repo nem PATH)."""
+        repo = Path(tmp_path)
+        (repo / "mod.py").write_text("def alvo(): pass\n")
+
+        cwd = Path.cwd()
+        monkeypatch.setenv("EIZO_REPO", str(repo))
+        monkeypatch.chdir(tmp_path / "..")  # cwd fora do repo
+        try:
+            runner = CliRunner()
+            result = runner.invoke(main, ["init"])
+        finally:
+            monkeypatch.chdir(cwd)
+
+        assert result.exit_code == 0
+        assert (repo / ".eizo" / "graph.db").exists()
+        store = GraphStore(repo)
+        assert store.get_nodes_by_name("alvo", kind="function")
+
+    def test_env_repo_watch(self, tmp_path: Path, monkeypatch: Any) -> None:
+        """EIZO_REPO define o repo para watch (sem --repo nem PATH)."""
+        repo = Path(tmp_path)
+        (repo / "mod.py").write_text("def alvo(): pass\n")
+
+        monkeypatch.setenv("EIZO_REPO", str(repo))
+        with patch("eizo.cli.time.sleep", side_effect=KeyboardInterrupt):
+            runner = CliRunner()
+            result = runner.invoke(main, ["watch"])
+
+        assert result.exit_code == 0
+        assert "Observando" in result.output
+        store = GraphStore(repo)
+        assert store.get_nodes_by_name("alvo", kind="function")
+
 
 class TestCliLogging:
     """Testes para logging/verbosity."""

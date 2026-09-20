@@ -129,6 +129,20 @@ def _repo_option() -> Callable[..., Any]:
     )
 
 
+def _resolve_effective_path(repo_path: str, path: str) -> str:
+    """Resolve o repo efetivo para comandos com PATH e --repo (init/watch).
+
+    Aplica EIZO_REPO apenas quando nenhum dos dois foi passado explicitamente
+    (ambos ficam no default "."), respeitando a prioridade CLI > env. O mesmo
+    critério de default usado por _merge_config; init/watch não passam por
+    _merge_config, então a aplicação da env acontece aqui.
+    """
+    env_repo = _env_value("repo")
+    if env_repo and repo_path == "." and path == ".":
+        return env_repo
+    return repo_path if repo_path != "." else path
+
+
 def _depth_option(default: int = 3) -> Callable[..., Any]:
     """Retorna decorator Click para --depth com validação 1..10."""
     return click.option(
@@ -182,6 +196,16 @@ def _env_bool(key: str) -> bool | None:
     if value is None:
         return None
     return value.lower() in {"1", "true", "yes", "on"}
+
+
+# Faixas válidas das opções numéricas (espelham os IntRange do Click).
+# Usadas para validar valores vindos de env/config, que não passam pelo
+# IntRange do Click. (None = sem limite naquela direção.)
+_RANGES: dict[str, tuple[int | None, int | None]] = {
+    "depth": (1, 10),
+    "limit": (1, None),
+    "min_refs": (1, None),
+}
 
 
 def _load_config(repo_path: Path, config_path: Path | None) -> dict[str, Any]:
@@ -279,6 +303,28 @@ def _merge_config(
                 merged[key] = cfg[key]
             else:
                 merged[key] = value
+
+            # Validação de faixa (mesmas faixas do Click): valores vindos de
+            # env/config não passam pelo IntRange do Click, então são checados
+            # aqui. Fora da faixa ou tipo não-inteiro → aviso + default,
+            # nunca valor silencioso. Keys sem faixa declarada passam intactos.
+            lo, hi = _RANGES.get(key, (None, None))
+            candidate = merged[key]
+            if lo is None and hi is None:
+                valid = True
+            elif isinstance(candidate, int) and not isinstance(candidate, bool):
+                valid = lo <= candidate if lo is not None else True
+                if valid and hi is not None:
+                    valid = candidate <= hi
+            else:
+                valid = False
+            if not valid:
+                console.print(
+                    f"[yellow]Aviso: {key}={candidate} fora da faixa "
+                    f"[{lo}..{hi if hi is not None else '∞'}] — usando "
+                    f"default ({default_value}).[/yellow]"
+                )
+                merged[key] = default_value
     elif command_values:
         merged = command_values.copy()
         if "repo_path" in merged and repo_path != "." and merged["repo_path"] == ".":
@@ -444,7 +490,8 @@ def init(
     dry_run: bool,
 ) -> None:
     """Indexa um repositório no grafo de conhecimento."""
-    effective_path = Path(repo_path if repo_path != "." else path).resolve()
+    repo_path = _resolve_effective_path(repo_path, path)
+    effective_path = Path(repo_path).resolve()
     store = GraphStore(effective_path)
 
     if dry_run:
@@ -545,7 +592,8 @@ def watch(path: str, repo_path: str, interval: float) -> None:
     já é rápida (~0,008s/arquivo em repositórios médios), o custo de
     reescanear a cada tick é baixo.
     """
-    effective_path = Path(repo_path if repo_path != "." else path).resolve()
+    repo_path = _resolve_effective_path(repo_path, path)
+    effective_path = Path(repo_path).resolve()
     store = GraphStore(effective_path)
 
     console.print(f"[bold]Observando {effective_path}[/bold] (intervalo: {interval}s). Ctrl+C para parar.")

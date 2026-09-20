@@ -555,6 +555,10 @@ Prioridade de merge: **CLI args > env vars > config file > Click defaults**.
 | `EIZO_MIN_REFS` | Default de `--min-refs` |
 | `EIZO_FULL_TEXT` | Default de `--full-text` |
 
+Valores numéricos vindos de `EIZO_*` ou de `.eizo/config.json` são validados
+nas mesmas faixas do CLI (`depth` 1..10, `limit`/`min_refs` >= 1); fora da
+faixa, o Eizō emite um aviso e usa o default.
+
 ## Desenvolvimento
 
 ```bash
