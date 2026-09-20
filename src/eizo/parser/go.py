@@ -7,13 +7,16 @@ chamadas de arquivos .go.
 from __future__ import annotations
 
 import hashlib
+import logging
 from pathlib import Path
 from typing import Any
 
 from tree_sitter import Language, Parser
 
 from eizo.graph.models import Edge, Node
-from eizo.parser.base import BaseParser
+from eizo.parser.base import MAX_AST_DEPTH, BaseParser
+
+logger = logging.getLogger("eizo")
 
 # Carrega a linguagem Go do pacote tree-sitter-go
 try:
@@ -70,17 +73,21 @@ def _prescan_type_positions(root: Any, source: bytes) -> dict[str, tuple[int, in
     """
     positions: dict[str, tuple[int, int]] = {}
 
-    def walk(node: Any) -> None:
+    # Travessia iterativa (pilha explícita): o pre-scan roda antes do guard
+    # de _walk_tree e um walk recursivo aqui estouraria a pilha em input
+    # profundamente aninhado antes de qualquer proteção. Ordem não importa
+    # (dict de posições).
+    stack: list[Any] = [root]
+    while stack:
+        node = stack.pop()
         if node.type == "type_spec":
             name_node = node.child_by_field_name("name")
             type_node = node.child_by_field_name("type")
             if name_node is not None and type_node is not None and type_node.type in ("struct_type", "interface_type"):
                 name = _get_text(source, name_node)
                 positions[name] = (name_node.start_point[0] + 1, name_node.start_point[1])
-        for child in node.children:
-            walk(child)
+        stack.extend(node.children)
 
-    walk(root)
     return positions
 
 
@@ -122,15 +129,25 @@ class GoParser(BaseParser):
 
         type_positions = _prescan_type_positions(tree.root_node, source_bytes)
 
-        self._walk_tree(
-            tree.root_node,
-            source_bytes,
-            file_path_str,
-            nodes,
-            edges,
-            file_node.id,
-            type_positions,
-        )
+        # RecursionError de aninhamento profundo vira parse PARCIAL (o que já
+        # foi extraído até estourar a pilha fica) — o mesmo contrato "nunca
+        # levanta exceção" do fuzz suite.
+        try:
+            self._walk_tree(
+                tree.root_node,
+                source_bytes,
+                file_path_str,
+                nodes,
+                edges,
+                file_node.id,
+                type_positions,
+            )
+        except RecursionError:
+            logger.warning(
+                "Profundidade da AST excedeu o limite de recursão em %s — "
+                "símbolos extraídos até aqui foram preservados (parse parcial).",
+                file_path_str,
+            )
 
         return nodes, edges
 
@@ -143,8 +160,18 @@ class GoParser(BaseParser):
         edges: list[Edge],
         parent_id: str | None,
         type_positions: dict[str, tuple[int, int]],
+        _depth: int = 0,
     ) -> None:
-        """Percorre a AST recursivamente extraindo símbolos."""
+        """Percorre a AST recursivamente extraindo símbolos.
+
+        Guard contra RecursionError em input válido profundamente aninhado:
+        ao passar de `MAX_AST_DEPTH` (ver parser/base.py), o walker para de
+        descer — parse PARCIAL em vez de estourar a pilha e descartar o
+        arquivo inteiro. O mesmo contrato "nunca levanta exceção" do fuzz
+        suite.
+        """
+        if _depth > MAX_AST_DEPTH:
+            return
         node_type = node.type
 
         if node_type == "function_declaration":
@@ -161,10 +188,10 @@ class GoParser(BaseParser):
             # chamadas aninhadas como `outer(inner())` — mesmo parent_id, pois
             # o call em si não introduz um novo escopo de função.
             for child in node.children:
-                self._walk_tree(child, source, file_path, nodes, edges, parent_id, type_positions)
+                self._walk_tree(child, source, file_path, nodes, edges, parent_id, type_positions, _depth + 1)
         else:
             for child in node.children:
-                self._walk_tree(child, source, file_path, nodes, edges, parent_id, type_positions)
+                self._walk_tree(child, source, file_path, nodes, edges, parent_id, type_positions, _depth + 1)
 
     def _handle_function(
         self,
@@ -205,7 +232,7 @@ class GoParser(BaseParser):
         body = node.child_by_field_name("body")
         if body is not None:
             for child in body.children:
-                self._walk_tree(child, source, file_path, nodes, edges, func_node.id, type_positions)
+                self._walk_tree(child, source, file_path, nodes, edges, func_node.id, type_positions, 1)
 
     def _handle_method(
         self,
@@ -250,7 +277,7 @@ class GoParser(BaseParser):
         body = node.child_by_field_name("body")
         if body is not None:
             for child in body.children:
-                self._walk_tree(child, source, file_path, nodes, edges, method_node.id, type_positions)
+                self._walk_tree(child, source, file_path, nodes, edges, method_node.id, type_positions, 1)
 
     def _resolve_receiver_parent(
         self,

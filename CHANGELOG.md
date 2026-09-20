@@ -31,6 +31,10 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 - Parsers Python e TypeScript toleram aninhamento profundo de input válido
   (bundles minificados): travessia da AST guarda profundidade e RecursionError
   vira parse parcial com aviso, em vez de descartar o arquivo inteiro.
+- Guard de profundidade estendido aos 6 parsers restantes (Go, Rust, Java,
+  C#, PHP, Ruby), com a constante única `MAX_AST_DEPTH` em `parser/base.py`;
+  os pre-scans de Go/Rust passam a percorrer a AST iterativamente (rodavam
+  recursivamente antes do guard).
 - `find_hotspots()` retorna `list[Node]` conforme o contrato de docs/api.md
   (a contagem fica em `metadata["reference_count"]` do nó); antes retornava
   `list[dict]`, divergindo da API estável documentada.

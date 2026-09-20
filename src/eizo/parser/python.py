@@ -13,11 +13,8 @@ from typing import Any
 from tree_sitter import Language, Parser
 
 from eizo.graph.models import Edge, Node
+from eizo.parser.base import MAX_AST_DEPTH as _MAX_AST_DEPTH
 from eizo.parser.base import BaseParser
-
-# Profundidade máxima da travessia da AST (guard contra RecursionError —
-# ver _walk_tree). Ordens de magnitude acima de qualquer código real.
-_MAX_AST_DEPTH = 500
 
 # Carrega a linguagem Python do pacote tree-sitter-python
 try:

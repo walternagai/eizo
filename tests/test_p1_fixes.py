@@ -20,12 +20,21 @@ import contextlib
 import json
 import sqlite3
 from pathlib import Path
+from typing import Any
 
+import pytest
 from setuptools import find_packages
 
 from eizo.graph.models import Edge, Node
 from eizo.graph.store import GraphStore
+from eizo.parser.base import MAX_AST_DEPTH
+from eizo.parser.csharp import CSharpParser
+from eizo.parser.go import GoParser
+from eizo.parser.java import JavaParser
+from eizo.parser.php import PhpParser
 from eizo.parser.python import PythonParser
+from eizo.parser.ruby import RubyParser
+from eizo.parser.rust import RustParser
 from eizo.parser.typescript import TypeScriptParser
 from eizo.queries.analysis import find_hotspots
 
@@ -153,6 +162,38 @@ class TestParserDeepNesting:
         parser = PythonParser()
         nodes, edges = parser.parse_file(Path("bad.py"), "def broken(:\n")
         assert isinstance(nodes, list) and isinstance(edges, list)
+
+    @pytest.mark.parametrize(
+        "parser_cls, filename, build_source",
+        [
+            ("go", "deep.go", lambda d: "package main\n\nfunc top() {\n\t_ = " + "f(" * d + "x" + ")" * d + "\n}"),
+            ("rust", "deep.rs", lambda d: "fn top() { " + "f(" * d + "x" + ")" * d + "; }"),
+            ("java", "deep.java", lambda d: "class T { void top() { " + "f(" * d + "x" + ")" * d + "; } }"),
+            ("csharp", "deep.cs", lambda d: "class t { void top() { " + "F(" * d + "x" + ")" * d + "; } }"),
+            ("php", "deep.php", lambda d: "<?php\nfunction top() { " + "f(" * d + "x" + ")" * d + "; }"),
+            ("ruby", "deep.rb", lambda d: "def top\n  " + "f(" * d + "x" + ")" * d + "\nend"),
+        ],
+    )
+    def test_deep_nesting_never_raises(
+        self,
+        parser_cls: str,
+        filename: str,
+        build_source: Any,
+    ) -> None:
+        """~2x MAX_AST_DEPTH de nesting: parse parcial, sem exceção (6 parsers)."""
+        parser_cls_map = {
+            "go": GoParser,
+            "rust": RustParser,
+            "java": JavaParser,
+            "csharp": CSharpParser,
+            "php": PhpParser,
+            "ruby": RubyParser,
+        }
+        depth = MAX_AST_DEPTH * 2
+        source = build_source(depth)
+        parser = parser_cls_map[parser_cls]()
+        nodes, edges = parser.parse_file(Path(filename), source)
+        assert any(n.name == "top" for n in nodes)
 
 
 class TestFindHotspotsContract:

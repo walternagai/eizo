@@ -200,6 +200,16 @@ src/eizo/
 
 ## Tree-sitter quirks
 
+- **Deep-nesting guard (all 8 parsers)**: `_walk_tree` carries a `_depth`
+  parameter and stops descending past `MAX_AST_DEPTH` (500, defined once in
+  `parser/base.py`) — deeply nested *valid* input (minified bundles with
+  thousands of levels) becomes a **partial parse** instead of a
+  `RecursionError` that silently discards the whole file. As a last-resort
+  net, `parse_file()` catches `RecursionError` (nested defs can still
+  overflow via handler recursion) and logs a warning. Go/Rust
+  `_prescan_type_positions` walk the tree iteratively (explicit stack) —
+  they run *before* the guard and order doesn't matter for their dict of
+  positions.
 - `tree-sitter>=0.23`: `language()` returns a **PyCapsule**, not a `Language` object.
   Must wrap: `Language(capsule)`.
 - Python inheritance field is `superclasses` (not `bases`).

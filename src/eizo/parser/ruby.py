@@ -7,13 +7,16 @@ arquivos .rb.
 from __future__ import annotations
 
 import hashlib
+import logging
 from pathlib import Path
 from typing import Any
 
 from tree_sitter import Language, Parser
 
 from eizo.graph.models import Edge, Node
-from eizo.parser.base import BaseParser
+from eizo.parser.base import MAX_AST_DEPTH, BaseParser
+
+logger = logging.getLogger("eizo")
 
 # Carrega a linguagem Ruby do pacote tree-sitter-ruby
 try:
@@ -84,7 +87,17 @@ class RubyParser(BaseParser):
         )
         nodes.append(file_node)
 
-        self._walk_tree(tree.root_node, source_bytes, file_path_str, nodes, edges, file_node.id)
+        # RecursionError de aninhamento profundo vira parse PARCIAL (o que
+        # já foi extraído até estourar a pilha fica) — o mesmo contrato
+        # "nunca levanta exceção" do fuzz suite.
+        try:
+            self._walk_tree(tree.root_node, source_bytes, file_path_str, nodes, edges, file_node.id)
+        except RecursionError:
+            logger.warning(
+                "Profundidade da AST excedeu o limite de recursão em %s — "
+                "símbolos extraídos até aqui foram preservados (parse parcial).",
+                file_path_str,
+            )
 
         return nodes, edges
 
@@ -96,8 +109,18 @@ class RubyParser(BaseParser):
         nodes: list[Node],
         edges: list[Edge],
         parent_id: str | None,
+        _depth: int = 0,
     ) -> None:
-        """Percorre a AST recursivamente extraindo símbolos."""
+        """Percorre a AST recursivamente extraindo símbolos.
+
+        Guard contra RecursionError em input válido profundamente aninhado:
+        ao passar de `MAX_AST_DEPTH` (ver parser/base.py), o walker para de
+        descer — parse PARCIAL em vez de estourar a pilha e descartar o
+        arquivo inteiro. O mesmo contrato "nunca levanta exceção" do fuzz
+        suite.
+        """
+        if _depth > MAX_AST_DEPTH:
+            return
         node_type = node.type
 
         if node_type in _TYPE_DECL_KINDS:
@@ -107,10 +130,10 @@ class RubyParser(BaseParser):
         elif node_type == "call":
             self._handle_call(node, source, file_path, nodes, edges, parent_id)
             for child in node.children:
-                self._walk_tree(child, source, file_path, nodes, edges, parent_id)
+                self._walk_tree(child, source, file_path, nodes, edges, parent_id, _depth + 1)
         else:
             for child in node.children:
-                self._walk_tree(child, source, file_path, nodes, edges, parent_id)
+                self._walk_tree(child, source, file_path, nodes, edges, parent_id, _depth + 1)
 
     def _handle_type_decl(
         self,
@@ -156,7 +179,7 @@ class RubyParser(BaseParser):
         body = node.child_by_field_name("body")
         if body is not None:
             for child in body.children:
-                self._walk_tree(child, source, file_path, nodes, edges, class_node.id)
+                self._walk_tree(child, source, file_path, nodes, edges, class_node.id, 1)
 
     def _handle_inheritance(
         self,
@@ -247,7 +270,7 @@ class RubyParser(BaseParser):
         body = node.child_by_field_name("body")
         if body is not None:
             for child in body.children:
-                self._walk_tree(child, source, file_path, nodes, edges, method_node.id)
+                self._walk_tree(child, source, file_path, nodes, edges, method_node.id, 1)
 
     def _handle_call(
         self,

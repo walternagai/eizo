@@ -7,13 +7,16 @@ imports (`use`) e chamadas de arquivos .rs.
 from __future__ import annotations
 
 import hashlib
+import logging
 from pathlib import Path
 from typing import Any
 
 from tree_sitter import Language, Parser
 
 from eizo.graph.models import Edge, Node
-from eizo.parser.base import BaseParser
+from eizo.parser.base import MAX_AST_DEPTH, BaseParser
+
+logger = logging.getLogger("eizo")
 
 # Carrega a linguagem Rust do pacote tree-sitter-rust
 try:
@@ -61,16 +64,20 @@ def _prescan_type_positions(root: Any, source: bytes) -> dict[str, tuple[int, in
     """
     positions: dict[str, tuple[int, int]] = {}
 
-    def walk(node: Any) -> None:
+    # Travessia iterativa (pilha explícita): o pre-scan roda antes do guard
+    # de _walk_tree e um walk recursivo aqui estouraria a pilha em input
+    # profundamente aninhado antes de qualquer proteção. Ordem não importa
+    # (dict de posições).
+    stack: list[Any] = [root]
+    while stack:
+        node = stack.pop()
         if node.type in _TYPE_ITEM_KINDS:
             name_node = node.child_by_field_name("name")
             if name_node is not None:
                 name = _get_text(source, name_node)
                 positions[name] = (name_node.start_point[0] + 1, name_node.start_point[1])
-        for child in node.children:
-            walk(child)
+        stack.extend(node.children)
 
-    walk(root)
     return positions
 
 
@@ -196,15 +203,25 @@ class RustParser(BaseParser):
 
         type_positions = _prescan_type_positions(tree.root_node, source_bytes)
 
-        self._walk_tree(
-            tree.root_node,
-            source_bytes,
-            file_path_str,
-            nodes,
-            edges,
-            file_node.id,
-            type_positions,
-        )
+        # RecursionError de aninhamento profundo vira parse PARCIAL (o que já
+        # foi extraído até estourar a pilha fica) — o mesmo contrato "nunca
+        # levanta exceção" do fuzz suite.
+        try:
+            self._walk_tree(
+                tree.root_node,
+                source_bytes,
+                file_path_str,
+                nodes,
+                edges,
+                file_node.id,
+                type_positions,
+            )
+        except RecursionError:
+            logger.warning(
+                "Profundidade da AST excedeu o limite de recursão em %s — "
+                "símbolos extraídos até aqui foram preservados (parse parcial).",
+                file_path_str,
+            )
 
         return nodes, edges
 
@@ -218,6 +235,7 @@ class RustParser(BaseParser):
         parent_id: str | None,
         type_positions: dict[str, tuple[int, int]],
         in_type_scope: bool = False,
+        _depth: int = 0,
     ) -> None:
         """Percorre a AST recursivamente extraindo símbolos.
 
@@ -225,7 +243,15 @@ class RustParser(BaseParser):
         `function_item` deve virar 'method'), independente de `parent_id` ter
         sido resolvido — um `impl` para um tipo desconhecido no arquivo ainda
         contém métodos, só não gera a aresta 'contains'.
+
+        Guard contra RecursionError em input válido profundamente aninhado:
+        ao passar de `MAX_AST_DEPTH` (ver parser/base.py), o walker para de
+        descer — parse PARCIAL em vez de estourar a pilha e descartar o
+        arquivo inteiro. O mesmo contrato "nunca levanta exceção" do fuzz
+        suite.
         """
+        if _depth > MAX_AST_DEPTH:
+            return
         node_type = node.type
 
         if node_type == "function_item":
@@ -248,10 +274,14 @@ class RustParser(BaseParser):
             # chamadas aninhadas como `outer(inner())` — mesmo parent_id, pois
             # o call em si não introduz um novo escopo de função.
             for child in node.children:
-                self._walk_tree(child, source, file_path, nodes, edges, parent_id, type_positions, in_type_scope)
+                self._walk_tree(
+                    child, source, file_path, nodes, edges, parent_id, type_positions, in_type_scope, _depth + 1
+                )
         else:
             for child in node.children:
-                self._walk_tree(child, source, file_path, nodes, edges, parent_id, type_positions, in_type_scope)
+                self._walk_tree(
+                    child, source, file_path, nodes, edges, parent_id, type_positions, in_type_scope, _depth + 1
+                )
 
     def _handle_function(
         self,
@@ -296,7 +326,7 @@ class RustParser(BaseParser):
         body = node.child_by_field_name("body")
         if body is not None:
             for child in body.children:
-                self._walk_tree(child, source, file_path, nodes, edges, func_node.id, type_positions)
+                self._walk_tree(child, source, file_path, nodes, edges, func_node.id, type_positions, True, 1)
 
     def _handle_type_item(
         self,
@@ -402,7 +432,7 @@ class RustParser(BaseParser):
 
         for child in body.children:
             self._walk_tree(
-                child, source, file_path, nodes, edges, parent_id, type_positions, in_type_scope=True
+                child, source, file_path, nodes, edges, parent_id, type_positions, in_type_scope=True, _depth=1
             )
 
     def _handle_use(
