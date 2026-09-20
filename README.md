@@ -41,8 +41,11 @@
 
 ### Do PyPI (recomendado)
 
+O nome da distribuição no PyPI é **`eizo-dev`** (o nome `eizo` puro já
+pertence a outro projeto); o módulo Python importado continua sendo `eizo`:
+
 ```bash
-pip install eizo
+pip install eizo-dev
 ```
 
 Graphviz é opcional — necessário apenas para `eizo export svg` e
@@ -70,7 +73,7 @@ padrão no Windows — use `py` (o launcher oficial do Python) diretamente:
 py -m pip install -e ".[dev]"
 
 # Ou apenas o pacote, sem dev deps
-py -m pip install eizo
+py -m pip install eizo-dev
 ```
 
 Notas:

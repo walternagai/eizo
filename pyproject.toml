@@ -3,7 +3,7 @@ requires = ["setuptools>=77.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "eizo"
+name = "eizo-dev"
 version = "1.0.1"
 description = "映像 — Codebase Knowledge Graph CLI. Parseia codebases com Tree-sitter, constrói grafo de conhecimento em SQLite, expõe queries via CLI e MCP."
 readme = "README.md"
