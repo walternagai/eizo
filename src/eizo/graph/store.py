@@ -86,6 +86,13 @@ class GraphStore:
         """
         self.db_path = ensure_db_dir(path)
         self._conn: sqlite3.Connection | None = None
+        # Caches de leitura por instância, invalidados em toda escrita que
+        # muda nodes/edges (ver _invalidate_cache). Existem porque as queries
+        # de análise (hotspots/dead code/trace/impact) re-resolvem call sites
+        # homônimos por definição — sem cache, o custo é O(defs × sites × defs)
+        # em nomes comuns. NUNCA persistem além da instância.
+        self._cache_nodes_by_name: dict[tuple[str, str | None], list[Node]] = {}
+        self._cache_resolve_stub: dict[str, Node | None] = {}
 
     @property
     def conn(self) -> sqlite3.Connection:
@@ -118,6 +125,17 @@ class GraphStore:
             raise
         else:
             self.conn.commit()
+            self._invalidate_cache()
+
+    def _invalidate_cache(self) -> None:
+        """Descarta os caches de leitura após uma escrita commitada.
+
+        Chamado no commit feliz de _transaction (que cobre todos os writers
+        multi-statement) e pelos writers single-statement de nodes/edges.
+        Um rollback NÃO invalida: nada mudou no banco.
+        """
+        self._cache_nodes_by_name.clear()
+        self._cache_resolve_stub.clear()
 
     def close(self) -> None:
         """Fecha a conexão SQLite, se aberta. Idempotente.
@@ -147,11 +165,18 @@ class GraphStore:
     def upsert_nodes(self, nodes: list[Node]) -> None:
         """Insere ou atualiza múltiplos nós em lote.
 
-        Ids repetidos dentro do mesmo lote são colapsados na última ocorrência,
-        que é a semântica que `INSERT OR REPLACE` já aplicava à tabela `nodes`.
-        Isso importa em arquivos minificados, onde tudo divide a mesma linha e o
-        id (`arquivo:nome:linha`) colide aos milhares: sem colapsar, o índice FTS
-        acumulava uma entrada órfã por ocorrência repetida.
+        Ids repetidos dentro do mesmo lote são colapsados na última ocorrência
+        (a mesma semântica de "última escrita vence" que INSERT OR REPLACE
+        aplicava à tabela `nodes`). Isso importa em arquivos minificados, onde
+        tudo divide a mesma linha e o id (`arquivo:nome:linha`) colide aos
+        milhares: sem colapsar, o índice FTS acumulava uma entrada órfã por
+        ocorrência repetida.
+
+        O upsert usa `ON CONFLICT DO UPDATE` — NÃO `INSERT OR REPLACE`: o
+        REPLACE remove a row existente e insere outra, e com
+        `PRAGMA foreign_keys=ON` esse DELETE dispara `ON DELETE CASCADE` nas
+        arestas incidentes, apagando-as silenciosamente. Com DO UPDATE, a row
+        é atualizada in-place e as arestas permanecem.
 
         Args:
             nodes: Nós a persistir (upsert por id; FTS sincronizado por rowid
@@ -178,9 +203,19 @@ class GraphStore:
         ]
         with self._transaction():
             self.conn.executemany(
-                """INSERT OR REPLACE INTO nodes
+                """INSERT INTO nodes
                    (id, name, kind, file_path, language, line_start, line_end, docstring, code_snippet, metadata)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(id) DO UPDATE SET
+                       name = excluded.name,
+                       kind = excluded.kind,
+                       file_path = excluded.file_path,
+                       language = excluded.language,
+                       line_start = excluded.line_start,
+                       line_end = excluded.line_end,
+                       docstring = excluded.docstring,
+                       code_snippet = excluded.code_snippet,
+                       metadata = excluded.metadata""",
                 data,
             )
             # Sincroniza índice FTS5: remove entradas antigas e reinsere, sempre
@@ -272,6 +307,11 @@ class GraphStore:
     ) -> list[Node]:
         """Busca nós por nome exato (opcionalmente filtrados por kind).
 
+        Resultados servidos de cache por instância quando possível — as
+        queries de análise chamam este método repetidamente para os mesmos
+        nomes (call sites homônimos) e cada miss custa um scan por índice.
+        Cache é invalidado em toda escrita (ver _invalidate_cache).
+
         Args:
             name: Nome exato do símbolo.
             kind: Filtra por tipo de nó (function, class, method...).
@@ -280,6 +320,10 @@ class GraphStore:
             Lista de Node com o nome exato (pode incluir homônimos de
             arquivos diferentes e stubs de call sites).
         """
+        cache_key = (name, kind)
+        if cache_key in self._cache_nodes_by_name:
+            return list(self._cache_nodes_by_name[cache_key])
+
         sql = "SELECT * FROM nodes WHERE name = ?"
         params: list[Any] = [name]
 
@@ -288,7 +332,9 @@ class GraphStore:
             params.append(kind)
 
         rows = self.conn.execute(sql, params).fetchall()
-        return [self._row_to_node(r) for r in rows]
+        nodes = [self._row_to_node(r) for r in rows]
+        self._cache_nodes_by_name[cache_key] = nodes
+        return list(nodes)
 
     def get_nodes_by_file(self, file_path: str) -> list[Node]:
         """Retorna todos os nós de um arquivo.
@@ -494,6 +540,7 @@ class GraphStore:
             ),
         )
         self.conn.commit()
+        self._invalidate_cache()
 
     def upsert_edges(self, edges: list[Edge]) -> None:
         """Insere ou atualiza múltiplas arestas em lote.
@@ -519,6 +566,7 @@ class GraphStore:
             data,
         )
         self.conn.commit()
+        self._invalidate_cache()
 
     def get_outgoing_edges(self, node_id: str, kind: str | None = None) -> list[Edge]:
         """Retorna arestas que saem de um nó.
@@ -616,13 +664,23 @@ class GraphStore:
         """Resolve um stub (call site ou stub de herança) para a definição
         real com mesmo nome, desambiguando por arquivo/import quando há
         múltiplos candidatos homônimos. Exclui outros stubs externos dos
-        candidatos (um stub nunca resolve para outro stub)."""
+        candidatos (um stub nunca resolve para outro stub).
+
+        Resoluções são cacheadas por stub.id e invalidadas em toda escrita:
+        find_hotspots/find_dead_code resolvem os MESMOS call sites para cada
+        definição homônima visitada — sem cache, cada um re-executa a
+        desambiguação completa.
+        """
+        if stub.id in self._cache_resolve_stub:
+            return self._cache_resolve_stub[stub.id]
         candidates = [
             c
             for c in self.get_nodes_by_name(stub.name)
             if c.kind in DEFINITION_KINDS and not c.metadata.get("external")
         ]
-        return self._disambiguate_definitions(stub.file_path, candidates)
+        resolved = self._disambiguate_definitions(stub.file_path, candidates)
+        self._cache_resolve_stub[stub.id] = resolved
+        return resolved
 
     def resolve_call_to_definition(self, call_node: Node) -> Node:
         """Dado um nó kind='call', tenta achar a definição com mesmo nome.

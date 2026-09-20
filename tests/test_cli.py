@@ -111,6 +111,7 @@ class TestCliWatch:
     def test_watch_indexes_and_stops_on_interrupt(self, tmp_path: Path) -> None:
         """Primeira passada indexa o repo; Ctrl+C encerra de forma limpa."""
         (tmp_path / "a.py").write_text("def a(): pass\n")
+        index_repository(tmp_path, force=True)  # watch exige repo indexado
 
         with patch("eizo.cli.time.sleep", side_effect=KeyboardInterrupt):
             runner = CliRunner()
@@ -125,6 +126,7 @@ class TestCliWatch:
     def test_watch_reports_change_between_ticks(self, tmp_path: Path) -> None:
         """Uma mudança feita entre duas iterações aparece resumida na saída."""
         (tmp_path / "a.py").write_text("def a(): pass\n")
+        index_repository(tmp_path, force=True)  # watch exige repo indexado
 
         calls = {"n": 0}
 
@@ -145,6 +147,7 @@ class TestCliWatch:
     def test_watch_silent_when_nothing_changes(self, tmp_path: Path) -> None:
         """Ticks sem mudança nenhuma não geram linha de resumo."""
         (tmp_path / "a.py").write_text("def a(): pass\n")
+        index_repository(tmp_path, force=True)  # watch exige repo indexado
 
         calls = {"n": 0}
 
@@ -159,13 +162,28 @@ class TestCliWatch:
 
         assert result.exit_code == 0
         lines_with_check = [line for line in result.output.splitlines() if "✓" in line]
-        # só a indexação inicial gera resumo — nada muda nos ticks seguintes
-        assert len(lines_with_check) == 1
+        # Repo já indexado e nada muda entre ticks: nenhum resumo esperado
+        # (o resumo do índice inicial é do `init`, não do watch).
+        assert len(lines_with_check) == 0
+
+    def test_watch_unindexed_repo_fails_without_creating_graph(self, tmp_path: Path) -> None:
+        """watch em repo não indexado falha e não cria .eizo/ (só init cria)."""
+        (tmp_path / "a.py").write_text("def a(): pass\n")
+
+        with patch("eizo.cli.time.sleep", side_effect=KeyboardInterrupt):
+            runner = CliRunner()
+            result = runner.invoke(main, ["watch", "--repo", str(tmp_path), "--interval", "0.2"])
+
+        assert result.exit_code == 1
+        assert "não indexado" in result.output
+        assert "eizo init" in result.output
+        assert not (tmp_path / ".eizo").exists()
 
     def test_watch_reports_file_removal(self, tmp_path: Path) -> None:
         """Um arquivo apagado entre ticks aparece como remoção no resumo."""
         (tmp_path / "a.py").write_text("def a(): pass\n")
         (tmp_path / "b.py").write_text("def b(): pass\n")
+        index_repository(tmp_path, force=True)  # watch exige repo indexado
 
         calls = {"n": 0}
 
@@ -667,6 +685,7 @@ class TestCliEnvVars:
         (repo / "mod.py").write_text("def alvo(): pass\n")
 
         monkeypatch.setenv("EIZO_REPO", str(repo))
+        index_repository(repo, force=True)  # watch exige repo indexado
         with patch("eizo.cli.time.sleep", side_effect=KeyboardInterrupt):
             runner = CliRunner()
             result = runner.invoke(main, ["watch"])

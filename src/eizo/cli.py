@@ -591,10 +591,14 @@ def watch(path: str, repo_path: str, interval: float) -> None:
     eventos do sistema de arquivos, faz polling. Como a indexação incremental
     já é rápida (~0,008s/arquivo em repositórios médios), o custo de
     reescanear a cada tick é baixo.
+
+    Assim como os comandos de consulta, exige repositório já indexado —
+    somente `init` cria o grafo (contrato de error handling do AGENTS.md):
+    watch num repo não indexado falha com orientação para rodar `eizo init`.
     """
     repo_path = _resolve_effective_path(repo_path, path)
+    store = _open_store(repo_path)
     effective_path = Path(repo_path).resolve()
-    store = GraphStore(effective_path)
 
     console.print(f"[bold]Observando {effective_path}[/bold] (intervalo: {interval}s). Ctrl+C para parar.")
     try:

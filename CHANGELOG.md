@@ -43,6 +43,21 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
   nome não produz mais DOT inválido — export_svg/export_png herdam a
   correção via export_dot); nomes com newline não quebram mais os comentários
   `%%` do classDiagram Mermaid.
+- `GraphStore.upsert_node()`/`upsert_nodes()` usam upsert real
+  (`ON CONFLICT DO UPDATE`) em vez de `INSERT OR REPLACE`: o REPLACE remove
+  e reinsere a row, disparando `ON DELETE CASCADE` nas arestas incidentes —
+  re-upsertar um nó apagava silenciosamente as arestas ligadas a ele. A
+  semântica "última escrita vence" é preservada.
+- `eizo watch` em repositório não indexado agora falha com
+  `ClickException` ("não indexado") sem criar o grafo — antes instanciava
+  `GraphStore` direto e criava `.eizo/graph.db` silenciosamente, violando
+  o contrato "somente `init` cria grafo".
+- `find_hotspots`/`find_dead_code` deixam de re-resolver call sites
+  homônimos para cada definição visitada: `GraphStore` cacheia
+  `get_nodes_by_name` e a resolução de stubs por instância (medido: 3.2×
+  menos lookups de nome num repo com 12 definições homônimas), invalidando
+  os caches a cada escrita — resultados idênticos, custo O(defs × sites ×
+  defs) reduzido.
 - `find_hotspots()` retorna `list[Node]` conforme o contrato de docs/api.md
   (a contagem fica em `metadata["reference_count"]` do nó); antes retornava
   `list[dict]`, divergindo da API estável documentada.

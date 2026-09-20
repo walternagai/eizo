@@ -21,6 +21,7 @@ import json
 import sqlite3
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 from setuptools import find_packages
@@ -196,6 +197,61 @@ class TestParserDeepNesting:
         assert any(n.name == "top" for n in nodes)
 
 
+class TestUpsertNodesPreservesEdges:
+    """INSERT OR REPLACE dispara FK ON DELETE CASCADE e apagava arestas
+    incidentes no re-upsert (defeito descoberto na task
+    fix-export-determinism-escaping). O upsert real (ON CONFLICT DO UPDATE)
+    preserva as arestas."""
+
+    def test_reupsert_target_preserves_edges(self, tmp_path: Path) -> None:
+        """Re-upsert do nó ALVO não apaga arestas incidentes nele."""
+        store = GraphStore(tmp_path)
+        target = Node(id="a" * 16, name="func_a", kind="function", file_path="a.py",
+                      language="python", line_start=1, line_end=1)
+        caller = Node(id="b" * 16, name="caller", kind="function", file_path="b.py",
+                      language="python", line_start=1, line_end=1)
+        store.upsert_nodes([target, caller])
+        store.upsert_edges([Edge(source_id=caller.id, target_id=target.id, kind="calls")])
+
+        store.upsert_nodes([target])  # re-upsert do alvo
+        assert len(store.get_outgoing_edges(caller.id)) == 1
+
+    def test_reupsert_source_preserves_edges(self, tmp_path: Path) -> None:
+        """Re-upsert do nó ORIGEM não apaga arestas que saem dele."""
+        store = GraphStore(tmp_path)
+        target = Node(id="c" * 16, name="func_c", kind="function", file_path="a.py",
+                      language="python", line_start=1, line_end=1)
+        caller = Node(id="d" * 16, name="caller", kind="function", file_path="b.py",
+                      language="python", line_start=1, line_end=1)
+        store.upsert_nodes([target, caller])
+        store.upsert_edges([Edge(source_id=caller.id, target_id=target.id, kind="calls")])
+
+        store.upsert_nodes([caller])  # re-upsert da origem
+        assert len(store.get_outgoing_edges(caller.id)) == 1
+
+    def test_reupsert_keeps_last_write_wins(self, tmp_path: Path) -> None:
+        """A semântica do REPLACE ('última escrita vence') é preservada."""
+        store = GraphStore(tmp_path)
+        node = Node(id="e" * 16, name="antes", kind="function", file_path="a.py",
+                    language="python", line_start=1, line_end=1)
+        store.upsert_nodes([node])
+        store.upsert_nodes([Node(id="e" * 16, name="depois", kind="function", file_path="a.py",
+                                 language="python", line_start=2, line_end=2)])
+        assert store.get_node(node.id).name == "depois"
+
+    def test_fts_synced_after_reupsert(self, tmp_path: Path) -> None:
+        """FTS segue sincronizado após o re-upsert com ON CONFLICT."""
+        store = GraphStore(tmp_path)
+        node = Node(id="f" * 16, name="unico_nome", kind="function", file_path="a.py",
+                    language="python", line_start=1, line_end=1)
+        store.upsert_nodes([node])
+        store.upsert_nodes([Node(id="f" * 16, name="unico_nome", kind="function",
+                                 file_path="a.py", language="python",
+                                 line_start=1, line_end=1, docstring="novo doc")])
+        fts = store.search_nodes_fts("novo doc")
+        assert any(n.id == node.id for n in fts)
+
+
 class TestFindHotspotsContract:
     """find_hotspots retorna list[Node] (contrato docs/api.md)."""
 
@@ -246,3 +302,60 @@ class TestFindHotspotsContract:
         parsed = json.loads(result.output)
         assert parsed[0]["node"]["name"] == "used"
         assert parsed[0]["reference_count"] == 2
+
+
+class TestAnalysisQueryCache:
+    """Cache de resolução no GraphStore para queries de análise (N+1)."""
+
+    def _make_repo_with_shared_name(self, tmp_path: Path, n_files: int) -> Path:
+        """n_files arquivos, cada um com helper() e caller() chamando helper()."""
+        from eizo.indexer import index_repository
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        for i in range(n_files):
+            (repo / f"mod{i}.py").write_text(
+                "def helper():\n    return 1\n\n"
+                "def caller():\n    return helper()\n"
+            )
+        index_repository(repo, force=True)
+        return repo
+
+    def test_hotspots_fewer_name_queries_with_cache(self, tmp_path: Path) -> None:
+        """find_hotspots com cache faz menos get_nodes_by_name que sem."""
+        from eizo.queries.analysis import find_hotspots
+
+        repo = self._make_repo_with_shared_name(tmp_path, 12)
+        store = GraphStore(repo)
+
+        calls = {"n": 0}
+        real = GraphStore.get_nodes_by_name
+
+        def _counting(self: GraphStore, name: str, kind: str | None = None) -> list[Node]:
+            calls["n"] += 1
+            return real(self, name, kind)
+
+        with patch.object(GraphStore, "get_nodes_by_name", _counting):
+            results = find_hotspots(store, min_references=1)
+        assert results  # helper tem 12 callers
+        # Medido: baseline sem cache = 192 chamadas (cada get_real_references
+        # de um 'helper' re-resolve os 12 call sites homônimos); com cache
+        # = ~60 (cada (nome, kind) distinto resolvido poucas vezes). O gate
+        # trava o ganho com folga contra flutuação da desambiguação.
+        assert calls["n"] < 100, f"get_nodes_by_name chamado {calls['n']}x"
+
+    def test_cache_invalidated_after_write(self, tmp_path: Path) -> None:
+        """Escrita invalida o cache: novo nó é visível imediatamente."""
+        store = GraphStore(tmp_path)
+        node = Node(id="ab" * 8, name="fresquinho", kind="function", file_path="a.py",
+                    language="python", line_start=1, line_end=1)
+        store.upsert_nodes([node])
+        assert store.get_nodes_by_name("fresquinho")  # primeira leitura: cache
+
+        # Escrita via outro caminho: muda o nome do nó
+        store.upsert_nodes([Node(id="ab" * 8, name="renomeado", kind="function",
+                                 file_path="a.py", language="python",
+                                 line_start=1, line_end=1)])
+        # Cache invalidado: o nome antigo não aparece mais
+        assert store.get_nodes_by_name("fresquinho") == []
+        assert store.get_nodes_by_name("renomeado")

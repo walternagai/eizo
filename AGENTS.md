@@ -312,9 +312,11 @@ src/eizo/
 - **FTS rows are anchored to a deterministic rowid** via `schema.fts_rowid()`.
   `node_id` is UNINDEXED, so deleting by it scans the whole index — that made
   reindexing quadratic in repo size. Always delete/insert FTS rows *by rowid*.
-- `upsert_nodes()` collapses duplicate ids within a batch (last one wins,
-  matching `INSERT OR REPLACE`). Minified files put every symbol on one line, so
-  `file:name:line` collides by the thousands inside a single file.
+- `upsert_nodes()` collapses duplicate ids within a batch (last one wins).
+  The upsert is a real `ON CONFLICT DO UPDATE`, **not** `INSERT OR REPLACE`:
+  REPLACE deletes+reinserts the row and the FK `ON DELETE CASCADE` then wipes
+  every edge incident to that node. Minified files put every symbol on one
+  line, so `file:name:line` collides by the thousands inside a single file.
 - Schema migration: `migrate_db()` upgrades v1 → v2 (adds file_index +
   nodes_fts) and v2 → v3 (rebuilds nodes_fts with deterministic rowids).
 
@@ -356,7 +358,9 @@ src/eizo/
 ## Error handling
 
 - Query commands open the graph via `cli._open_store()`, never `GraphStore()`
-  directly. Only `init` may create a graph.
+  directly. Only `init` may create a graph — **including `watch`**: watching
+  an unindexed repo fails with `ClickException` ("não indexado") instead of
+  silently creating an empty graph.
 - Repo without `.eizo/graph.db` → `ClickException` ("não indexado", exit 1), and
   nothing is written to disk. Previously this silently created an empty graph and
   reported "no results", indistinguishable from a genuine empty match.

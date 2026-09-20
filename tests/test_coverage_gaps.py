@@ -17,7 +17,7 @@ from eizo.queries.search import get_symbol_context
 class TestCoverageGaps:
     """Testes focados em cobrir linhas específicas."""
 
-    # ─── indexer.py: linhas 45-46, 49-50 (parser RuntimeError) ───
+    # ─── indexer.py: parser RuntimeError (nenhum parser disponível) ───
 
     def test_indexer_parser_runtime_error(self, tmp_path: Path) -> None:
         """Simula RuntimeError ao carregar parser."""
@@ -27,7 +27,7 @@ class TestCoverageGaps:
             stats = store.get_stats()
             assert stats.total_nodes == 0
 
-    # ─── indexer.py: linhas 121-122 (parser None) ───
+    # ─── indexer.py: extensão sem parser ───
 
     def test_indexer_parser_none_for_file(self, tmp_path: Path) -> None:
         """Arquivo com extensão que nenhum parser cobre."""
@@ -37,28 +37,36 @@ class TestCoverageGaps:
         stats = store.get_stats()
         assert stats.total_nodes == 0
 
-    # ─── indexer.py: linhas 136-137 (exception during parse) ───
+    # ─── indexer.py: exceção durante parse de um arquivo ───
 
     def test_indexer_parse_exception(self, tmp_path: Path) -> None:
-        """Simula exceção durante parsing de um arquivo."""
+        """Simula exceção durante parsing de um arquivo.
+
+        O indexer captura, reporta o erro e continua — o arquivo NÃO entra
+        no grafo (o nó 'file' nem chega a ser criado).
+        """
         repo = Path(tmp_path)
         (repo / "test.py").write_text("x = 1\n")
         with patch("eizo.parser.python.PythonParser.parse_file", side_effect=Exception("parse error")):
             store = index_repository(repo)
             stats = store.get_stats()
-            # Deve ter processado sem crashar
-            assert stats.total_nodes >= 0
+            assert stats.total_nodes == 0  # arquivo problemático não entra
 
-    # ─── indexer.py: linhas 151-155 (error reporting) ───
+    # ─── indexer.py: erros de parse não abortam a indexação ───
 
     def test_indexer_error_reporting(self, tmp_path: Path) -> None:
-        """Múltiplos erros durante indexação devem ser reportados."""
+        """Múltiplos arquivos inválidos são indexados como 'file' sem símbolos.
+
+        Bytes NUL não produzem símbolos parseáveis, mas o nó 'file' do
+        arquivo entra no grafo (parse parcial por arquivo, não crash) —
+        a indexação completa sem abortar.
+        """
         repo = Path(tmp_path)
         for i in range(7):
             (repo / f"bad{i}.py").write_text("\x00\x00invalid\x00\x00")
         store = index_repository(repo)
         stats = store.get_stats()
-        assert stats.total_nodes >= 0
+        assert stats.total_nodes == 7  # 1 nó 'file' por arquivo, 0 símbolos
 
     # ─── cli.py: linhas 117-118 (trace with callers) ───
 
@@ -270,7 +278,7 @@ function test() {
         nodes, edges = parser.parse_file(Path("test.ts"), source)
         assert len(nodes) >= 1
 
-    # ─── parser/python.py: linhas 75-79 (RuntimeError quando PYTHON_LANGUAGE é None) ───
+    # ─── parser/python.py: __init__ levanta RuntimeError sem tree-sitter ───
 
     def test_python_parser_init_no_language(self) -> None:
         """PythonParser.__init__ levanta RuntimeError se tree-sitter ausente."""
@@ -284,7 +292,7 @@ function test() {
         finally:
             py_mod.PYTHON_LANGUAGE = original
 
-    # ─── parser/typescript.py: linhas 51-55 (RuntimeError quando TS_LANGUAGE é None) ───
+    # ─── parser/typescript.py: __init__ levanta RuntimeError sem tree-sitter ───
 
     def test_ts_parser_init_no_language(self) -> None:
         """TypeScriptParser.__init__ levanta RuntimeError se tree-sitter ausente."""
@@ -298,7 +306,7 @@ function test() {
         finally:
             ts_mod.TS_LANGUAGE = original
 
-    # ─── parser/python.py: linha 153 (function sem name_node) ───
+    # ─── parser/python.py: _handle_function com name_node=None ───
 
     def test_handle_function_no_name(self) -> None:
         """_handle_function com name_node=None retorna sem crashar."""
@@ -311,11 +319,12 @@ function test() {
 
         node = MagicMock()
         node.child_by_field_name.return_value = None
-        # Chama _handle_function diretamente com nó sem name
-        parser._handle_function(node, b"", "test.py", [], [], None)
-        # Se chegou aqui sem crashar, o early-return funcionou
+        nodes: list = []
+        edges: list = []
+        parser._handle_function(node, b"", "test.py", nodes, edges, None)
+        assert nodes == [] and edges == []  # early-return não apendou nada
 
-    # ─── parser/python.py: linha 199 (class sem name_node) ───
+    # ─── parser/python.py: _handle_class com name_node=None ───
 
     def test_handle_class_no_name(self) -> None:
         """_handle_class com name_node=None retorna sem crashar."""
@@ -328,9 +337,12 @@ function test() {
 
         node = MagicMock()
         node.child_by_field_name.return_value = None
-        parser._handle_class(node, b"", "test.py", [], [], None)
+        nodes: list = []
+        edges: list = []
+        parser._handle_class(node, b"", "test.py", nodes, edges, None)
+        assert nodes == [] and edges == []  # early-return não apendou nada
 
-    # ─── parser/python.py: linha 287 (import_from sem module_name) ───
+    # ─── parser/python.py: _handle_import_from sem module_name ───
 
     def test_handle_import_from_no_module(self) -> None:
         """_handle_import_from com module_name=None retorna sem crashar."""
@@ -343,9 +355,12 @@ function test() {
 
         node = MagicMock()
         node.child_by_field_name.return_value = None
-        parser._handle_import_from(node, b"", "test.py", [], [], None)
+        nodes: list = []
+        edges: list = []
+        parser._handle_import_from(node, b"", "test.py", nodes, edges, None)
+        assert nodes == [] and edges == []  # early-return não apendou nada
 
-    # ─── parser/python.py: linha 324 (call sem function node) ───
+    # ─── parser/python.py: _handle_call com func_node=None ───
 
     def test_handle_call_no_function(self) -> None:
         """_handle_call com func_node=None retorna sem crashar."""
@@ -358,9 +373,12 @@ function test() {
 
         node = MagicMock()
         node.child_by_field_name.return_value = None
-        parser._handle_call(node, b"", "test.py", [], [], None)
+        nodes: list = []
+        edges: list = []
+        parser._handle_call(node, b"", "test.py", nodes, edges, None)
+        assert nodes == [] and edges == []  # early-return não apendou nada
 
-    # ─── parser/python.py: linha 335 (call attribute sem attr) ───
+    # ─── parser/python.py: _handle_call com attribute sem campo attribute ───
 
     def test_handle_call_attribute_no_attr(self) -> None:
         """_handle_call com attribute node mas sem field 'attribute'."""
@@ -376,9 +394,12 @@ function test() {
         func_node.child_by_field_name.return_value = None  # attribute field ausente
         node = MagicMock()
         node.child_by_field_name.return_value = func_node
-        parser._handle_call(node, b"", "test.py", [], [], None)
+        nodes: list = []
+        edges: list = []
+        parser._handle_call(node, b"", "test.py", nodes, edges, None)
+        assert nodes == [] and edges == []  # early-return não apendou nada
 
-    # ─── parser/typescript.py: linha 176 (method sem name_node) ───
+    # ─── parser/typescript.py: _handle_method com name_node=None ───
 
     def test_handle_ts_method_no_name(self) -> None:
         """_handle_method TS com name_node=None retorna sem crashar."""
@@ -391,9 +412,12 @@ function test() {
 
         node = MagicMock()
         node.child_by_field_name.return_value = None
-        parser._handle_method(node, b"", "test.ts", [], [], None)
+        nodes: list = []
+        edges: list = []
+        parser._handle_method(node, b"", "test.ts", nodes, edges, None)
+        assert nodes == [] and edges == []  # early-return não apendou nada
 
-    # ─── parser/typescript.py: linha 274 (import sem source) ───
+    # ─── parser/typescript.py: _handle_import com source=None ───
 
     def test_handle_ts_import_no_source(self) -> None:
         """_handle_import TS com source=None retorna sem crashar."""
@@ -406,9 +430,12 @@ function test() {
 
         node = MagicMock()
         node.child_by_field_name.return_value = None
-        parser._handle_import(node, b"", "test.ts", [], [], None)
+        nodes: list = []
+        edges: list = []
+        parser._handle_import(node, b"", "test.ts", nodes, edges, None)
+        assert nodes == [] and edges == []  # early-return não apendou nada
 
-    # ─── parser/typescript.py: linha 306 (call sem function node) ───
+    # ─── parser/typescript.py: _handle_call com func_node=None ───
 
     def test_handle_ts_call_no_function(self) -> None:
         """_handle_call TS com func_node=None retorna sem crashar."""
@@ -421,9 +448,12 @@ function test() {
 
         node = MagicMock()
         node.child_by_field_name.return_value = None
-        parser._handle_call(node, b"", "test.ts", [], [], None)
+        nodes: list = []
+        edges: list = []
+        parser._handle_call(node, b"", "test.ts", nodes, edges, None)
+        assert nodes == [] and edges == []  # early-return não apendou nada
 
-    # ─── parser/typescript.py: linha 315 (call member_expression sem property) ───
+    # ─── parser/typescript.py: _handle_call com member_expression sem property ───
 
     def test_handle_ts_call_member_no_property(self) -> None:
         """_handle_call TS com member_expression mas sem property."""
@@ -439,9 +469,12 @@ function test() {
         func_node.child_by_field_name.return_value = None  # property field ausente
         node = MagicMock()
         node.child_by_field_name.return_value = func_node
-        parser._handle_call(node, b"", "test.ts", [], [], None)
+        nodes: list = []
+        edges: list = []
+        parser._handle_call(node, b"", "test.ts", nodes, edges, None)
+        assert nodes == [] and edges == []  # early-return não apendou nada
 
-    # ─── cli.py: linhas 183, 204, 224, 250, 369-370, 430-431, 494-495, 547-552, 672-676, 687-688 ───
+    # ─── cli.py: _merge_config, config file, env vars e completion ───
 
     def test_cli_merge_config_no_command_values(
         self, indexed_empty_repo: Path, monkeypatch: pytest.MonkeyPatch
@@ -503,7 +536,18 @@ function test() {
         result = _install_completion("powershell")
         assert "não suportado" in result.lower()
 
-    def test_cli_no_color_explicit(self, indexed_empty_repo: Path) -> None:
+    @pytest.fixture
+    def _reset_color_state(self) -> None:
+        """Restaura o estado global de cor após o teste (sem vazamento)."""
+        import eizo.cli
+        from eizo.cli import console
+
+        yield
+        eizo.cli._force_color = None
+        console._color_system = None
+        console._force_terminal = None
+
+    def test_cli_no_color_explicit(self, indexed_empty_repo: Path, _reset_color_state: None) -> None:
         """--no-color desativa sistema de cor."""
         from click.testing import CliRunner
 
@@ -514,7 +558,7 @@ function test() {
         result = runner.invoke(main, ["--no-color", "status", "--repo", str(indexed_empty_repo)])
         assert result.exit_code == 0
         assert console._color_system is None
-        eizo.cli._force_color = False
+        assert eizo.cli._force_color is False  # flag explícita registrada
 
     def test_cli_init_json(self, tmp_path: Path) -> None:
         """init --output-format json retorna JSON."""
@@ -896,8 +940,10 @@ function test() {
         conn = sqlite3.connect(str(db_path))
         conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
         conn.execute("CREATE TABLE nodes (id TEXT PRIMARY KEY)")
-        # Sem schema_version
+        # Sem schema_version: migrate_db retorna early e NADA é gravado
         migrate_db(conn)
+        row = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
+        assert row is None  # early-return não registrou versão
         conn.close()
 
     # ─── __main__.py: linha 8 ───
