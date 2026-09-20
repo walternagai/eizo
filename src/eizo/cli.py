@@ -1181,8 +1181,8 @@ def hotspots(
 
     if ctx.obj.get("format") == "json":
         _emit_json([
-            {"node": _node_to_dict(r["node"]), "reference_count": r["reference_count"]}
-            for r in results
+            {"node": _node_to_dict(node), "reference_count": node.metadata["reference_count"]}
+            for node in results
         ])
         return
 
@@ -1200,13 +1200,12 @@ def hotspots(
     table.add_column("Arquivo", style="white")
     table.add_column("Linha", style="dim")
 
-    for i, item in enumerate(results, 1):
-        node = item["node"]
+    for i, node in enumerate(results, 1):
         table.add_row(
             str(i),
             node.name,
             node.kind,
-            str(item["reference_count"]),
+            str(node.metadata["reference_count"]),
             node.file_path,
             str(node.line_start or ""),
         )

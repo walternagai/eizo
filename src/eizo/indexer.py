@@ -44,9 +44,22 @@ def _file_content_hash(source: str) -> str:
     return hashlib.sha256(source.encode("utf-8")).hexdigest()[:16]
 
 
-def _should_ignore(path: Path) -> bool:
-    """Verifica se o caminho deve ser ignorado."""
-    for part in path.parts:
+def _should_ignore(path: Path, root: Path | None = None) -> bool:
+    """Verifica se o caminho deve ser ignorado.
+
+    Args:
+        path: Caminho do arquivo/diretório a testar.
+        root: Raiz do repo indexado. Quando informado, apenas as partes do
+            caminho RELATIVAS à raiz são comparadas com IGNORE_DIRS — o
+            caminho absoluto pode atravessar ancestrais com nomes como
+            "build" ou "venv" (ex: ~/build/meu-projeto), que não podem
+            filtrar o repositório inteiro.
+
+    Returns:
+        True se o caminho deve ser ignorado.
+    """
+    parts = path.relative_to(root).parts if root is not None else path.parts
+    for part in parts:
         if part in IGNORE_DIRS:
             return True
     if path.name.startswith("."):
@@ -206,7 +219,8 @@ def index_repository(
     # Filtra ignorados (arquivos ocultos, extensões binárias etc. — a poda
     # acima já cobre os diretórios em IGNORE_DIRS/.gitignore/.eizoignore,
     # mas mantemos o filtro para os demais critérios de _should_ignore).
-    files = [f for f in files if not _should_ignore(f)]
+    # Sempre com root informado: ignora apenas partes RELATIVAS à raiz.
+    files = [f for f in files if not _should_ignore(f, repo_path)]
     files = [f for f in files if not ignore_spec.match_file(f.relative_to(repo_path).as_posix())]
 
     # Arquivos que sumiram do disco desde a última indexação. Comparamos contra

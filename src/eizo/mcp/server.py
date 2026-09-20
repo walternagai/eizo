@@ -198,8 +198,8 @@ def create_server(store: GraphStore, port: int = 8765) -> FastMCP:
         """
         results = find_hotspots(store, limit=_clamp_limit(limit), min_references=min_references)
         return json.dumps([
-            {"node": _node_to_dict(r["node"]), "reference_count": r["reference_count"]}
-            for r in results
+            {"node": _node_to_dict(node), "reference_count": node.metadata["reference_count"]}
+            for node in results
         ], indent=2, default=str)
 
     return mcp

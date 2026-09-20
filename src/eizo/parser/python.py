@@ -6,6 +6,7 @@ Extrai funções, classes, métodos, imports e chamadas de arquivos .py.
 from __future__ import annotations
 
 import hashlib
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,10 @@ from tree_sitter import Language, Parser
 
 from eizo.graph.models import Edge, Node
 from eizo.parser.base import BaseParser
+
+# Profundidade máxima da travessia da AST (guard contra RecursionError —
+# ver _walk_tree). Ordens de magnitude acima de qualquer código real.
+_MAX_AST_DEPTH = 500
 
 # Carrega a linguagem Python do pacote tree-sitter-python
 try:
@@ -22,6 +27,8 @@ try:
     PYTHON_LANGUAGE: Language | None = Language(_capsule)
 except ImportError:
     PYTHON_LANGUAGE = None
+
+logger = logging.getLogger("eizo")
 
 
 def _node_id(name: str, file_path: str, line: int, column: int = 0) -> str:
@@ -105,15 +112,24 @@ class PythonParser(BaseParser):
         )
         nodes.append(file_node)
 
-        # Percorre a AST
-        self._walk_tree(
-            tree.root_node,
-            source_bytes,
-            file_path_str,
-            nodes,
-            edges,
-            file_node.id,
-        )
+        # Percorre a AST. RecursionError de aninhamento profundo é capturada
+        # e vira parse PARCIAL (o que já foi extraído até estourar a pilha
+        # fica) — o mesmo contrato "nunca levanta exceção" do fuzz suite.
+        try:
+            self._walk_tree(
+                tree.root_node,
+                source_bytes,
+                file_path_str,
+                nodes,
+                edges,
+                file_node.id,
+            )
+        except RecursionError:
+            logger.warning(
+                "Profundidade da AST excedeu o limite de recursão em %s — "
+                "símbolos extraídos até aqui foram preservados (parse parcial).",
+                file_path_str,
+            )
 
         return nodes, edges
 
@@ -125,8 +141,20 @@ class PythonParser(BaseParser):
         nodes: list[Node],
         edges: list[Edge],
         parent_id: str | None = None,
+        _depth: int = 0,
     ) -> None:
-        """Percorre a AST recursivamente extraindo símbolos."""
+        """Percorre a AST recursivamente extraindo símbolos.
+
+        Input legítimo pode ser aninhado mais fundo do que o limite padrão
+        de recursão do Python (bundles minificados com JSON/arrays de
+        milhares de níveis). `_depth` guarda o nível da travessia; ao passar
+        de `_MAX_AST_DEPTH`, o walker para de descer — parse PARCIAL (as
+        construções rasteiras são capturadas; as mais profundas são
+        truncadas) em vez de estourar a pilha e descartar o arquivo inteiro.
+        O mesmo contrato "nunca levanta exceção" do fuzz suite.
+        """
+        if _depth > _MAX_AST_DEPTH:
+            return
         node_type = node.type
 
         if node_type == "function_definition":
@@ -143,11 +171,11 @@ class PythonParser(BaseParser):
             # chamadas aninhadas como `outer(inner())` — mesmo parent_id, pois
             # o call em si não introduz um novo escopo de função.
             for child in node.children:
-                self._walk_tree(child, source, file_path, nodes, edges, parent_id)
+                self._walk_tree(child, source, file_path, nodes, edges, parent_id, _depth + 1)
         else:
             # Continua recursão para nós não tratados
             for child in node.children:
-                self._walk_tree(child, source, file_path, nodes, edges, parent_id)
+                self._walk_tree(child, source, file_path, nodes, edges, parent_id, _depth + 1)
 
     def _handle_function(
         self,
@@ -194,7 +222,7 @@ class PythonParser(BaseParser):
 
         # Continua dentro da função para calls
         for child in node.children:
-            self._walk_tree(child, source, file_path, nodes, edges, func_node.id)
+            self._walk_tree(child, source, file_path, nodes, edges, func_node.id, 1)
 
     def _handle_class(
         self,
@@ -267,7 +295,7 @@ class PythonParser(BaseParser):
 
         # Continua dentro da classe para métodos
         for child in node.children:
-            self._walk_tree(child, source, file_path, nodes, edges, class_node.id)
+            self._walk_tree(child, source, file_path, nodes, edges, class_node.id, 1)
 
     def _handle_import(
         self,

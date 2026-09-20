@@ -10,8 +10,6 @@ e imports), indicando pontos críticos de acoplamento.
 
 from __future__ import annotations
 
-from typing import Any
-
 from eizo.graph.models import DEFINITION_KINDS, Node
 from eizo.graph.store import GraphStore
 
@@ -101,12 +99,15 @@ def find_hotspots(
     store: GraphStore,
     limit: int = 20,
     min_references: int = 2,
-) -> list[dict[str, Any]]:
+) -> list[Node]:
     """Encontra símbolos mais referenciados (hotspots).
 
     Conta referências reais (calls/imports/inherits, resolvendo call sites —
     ver `real_referrers`) para cada nó de definição. Símbolos com muitas
     referências são pontos críticos — mudanças neles têm alto impacto.
+
+    A contagem fica em `metadata["reference_count"]` do nó retornado — a
+    assinatura é `list[Node]`, conforme o contrato de docs/api.md.
 
     Args:
         store: GraphStore com o grafo.
@@ -114,14 +115,18 @@ def find_hotspots(
         min_references: Mínimo de referências para aparecer no resultado.
 
     Returns:
-        Lista de dicts com 'node' (Node) e 'reference_count' (int),
-        ordenada por reference_count descendente.
+        Lista de Node ordenada por contagem de referências descendente
+        (desempate por nome); cada Node traz
+        `metadata["reference_count"] = int`.
     """
-    results: list[dict[str, Any]] = []
+    scored: list[tuple[Node, int]] = []
     for node in _definition_nodes(store):
         ref_count = len(real_referrers(store, node))
         if ref_count >= min_references:
-            results.append({"node": node, "reference_count": ref_count})
+            scored.append((node, ref_count))
 
-    results.sort(key=lambda r: (-r["reference_count"], r["node"].name))
-    return results[:limit]
+    scored.sort(key=lambda pair: (-pair[1], pair[0].name))
+    return [
+        Node(**{**node.__dict__, "metadata": {**node.metadata, "reference_count": count}})
+        for node, count in scored[:limit]
+    ]

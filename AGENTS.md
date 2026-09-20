@@ -324,8 +324,7 @@ src/eizo/
   bounded number of iterations through `CliRunner` without hanging the suite.
 - Coverage gate: 70%.
 - `cli.py`: 99% coverage; `__main__.py`: 100% coverage.
-- `asyncio_mode = auto` in pytest config.
-- 719 tests total. Test files include: `test_cli.py`, `test_main.py`, `test_indexer.py`,
+- 755 tests total. Test files include: `test_cli.py`, `test_main.py`, `test_indexer.py`,
   `test_indexer_extended.py`, `test_incremental.py`, `test_analysis.py`, `test_export.py`,
   `test_export_html.py`, `test_queries_extended.py`, `test_store_extended.py`,
   `test_parser_python.py`, `test_parser_python_extended.py`,
@@ -341,7 +340,8 @@ src/eizo/
   `test_queries_trace.py`, `test_queries_impact.py`,
   `test_mcp_server.py`, `test_coverage_gaps.py`, `test_queries_cycles.py`,
   `test_queries_metrics.py`, `test_queries_why.py`, `test_queries_diff.py`,
-  `test_cli_cycles.py`, `test_cli_metrics.py`, `test_cli_why.py`, `test_cli_diff.py`.
+  `test_cli_cycles.py`, `test_cli_metrics.py`, `test_cli_why.py`, `test_cli_diff.py`,
+  `test_public_api.py`, `test_p1_fixes.py`.
 
 ## Error handling
 

@@ -17,11 +17,31 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
   `.eizo/config.json` agora são validados nas mesmas faixas do CLI
   (`depth` 1..10, `limit`/`min_refs` >= 1); fora da faixa, emite aviso e
   usa o default em vez de aplicar o valor silenciosamente.
+- `eizo.parser` e `eizo.mcp` agora são incluídos no wheel — antes,
+  `find_packages` os omitia (sem `__init__.py`) e instalações não-editáveis
+  perdiam todos os parsers e o comando `eizo mcp`.
+- Escritas multi-statement do `GraphStore` (`upsert_nodes`,
+  `delete_nodes_by_file`, `clear_all`) agora fazem rollback em exceção: um
+  lock concorrente no meio da sequência não deixa mais transação aberta
+  nem persiste lote parcial com FTS dessincronizado.
+- `_should_ignore` do indexer compara apenas as partes do caminho
+  RELATIVAS à raiz do repo — um repositório clonado sob um diretório com
+  nome "build"/"venv"/"dist" não é mais filtrado inteiro (nem apagado do
+  grafo pela detecção de remoção).
+- Parsers Python e TypeScript toleram aninhamento profundo de input válido
+  (bundles minificados): travessia da AST guarda profundidade e RecursionError
+  vira parse parcial com aviso, em vez de descartar o arquivo inteiro.
+- `find_hotspots()` retorna `list[Node]` conforme o contrato de docs/api.md
+  (a contagem fica em `metadata["reference_count"]` do nó); antes retornava
+  `list[dict]`, divergindo da API estável documentada.
 
 ### Alterado
 
 - Metadata de distribuição, matriz de Python, licença e documentação de
   instalação alinhados com o status de API estável do projeto.
+- Dependências removidas por não serem usadas: `pyyaml` (runtime),
+  `pytest-asyncio` + `asyncio_mode` (nenhum teste async) e `pre-commit`
+  (sem `.pre-commit-config.yaml`).
 
 ## [1.0.0] - 2026-08-10
 

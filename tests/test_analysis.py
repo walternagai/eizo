@@ -146,8 +146,8 @@ class TestFindHotspots:
         results = find_hotspots(analysis_store)
         assert len(results) >= 1
         # Utility deve estar no topo (2 refs)
-        assert results[0]["node"].name == "utility"
-        assert results[0]["reference_count"] == 2
+        assert results[0].name == "utility"
+        assert results[0].metadata["reference_count"] == 2
 
     def test_min_references_filter(self, analysis_store: GraphStore) -> None:
         """min_references=3 exclui utility (tem só 2)."""
@@ -182,8 +182,8 @@ class TestFindHotspots:
         ])
         results = find_hotspots(store, min_references=1)
         # func_a (3 refs) deve vir antes de func_b (1 ref)
-        assert results[0]["node"].name == "func_a"
-        assert results[0]["reference_count"] == 3
+        assert results[0].name == "func_a"
+        assert results[0].metadata["reference_count"] == 3
 
 
 # ─── Integração: parser + indexer reais (não fixtures idealizadas) ──
@@ -290,7 +290,7 @@ class TestFindHotspotsRealIndexer:
         index_repository(repo, store, force=True)
 
         results = find_hotspots(store, min_references=1)
-        by_name = {r["node"].name: r["reference_count"] for r in results}
+        by_name = {r.name: r.metadata["reference_count"] for r in results}
         # 'used' tem exatamente 2 callers reais — não inflado por arestas
         # estruturais 'contains' (que ligariam cada função ao arquivo).
         assert by_name["used"] == 2

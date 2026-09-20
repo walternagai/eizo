@@ -6,6 +6,7 @@ Extrai funções, classes, métodos, imports e chamadas de arquivos .ts/.tsx/.js
 from __future__ import annotations
 
 import hashlib
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,10 @@ from tree_sitter import Language, Parser
 
 from eizo.graph.models import Edge, Node
 from eizo.parser.base import BaseParser
+
+# Profundidade máxima da travessia da AST (guard contra RecursionError —
+# ver _walk_tree). Ordens de magnitude acima de qualquer código real.
+_MAX_AST_DEPTH = 500
 
 # Carrega a linguagem TypeScript do pacote tree-sitter-typescript
 try:
@@ -22,6 +27,8 @@ try:
     TS_LANGUAGE: Language | None = Language(_capsule)
 except ImportError:
     TS_LANGUAGE = None
+
+logger = logging.getLogger("eizo")
 
 
 def _node_id(name: str, file_path: str, line: int, column: int = 0) -> str:
@@ -115,15 +122,24 @@ class TypeScriptParser(BaseParser):
         )
         nodes.append(file_node)
 
-        # Percorre a AST
-        self._walk_tree(
-            tree.root_node,
-            source_bytes,
-            file_path_str,
-            nodes,
-            edges,
-            file_node.id,
-        )
+        # Percorre a AST. RecursionError de aninhamento profundo é capturada
+        # e vira parse PARCIAL (o que já foi extraído até estourar a pilha
+        # fica) — o mesmo contrato "nunca levanta exceção" do fuzz suite.
+        try:
+            self._walk_tree(
+                tree.root_node,
+                source_bytes,
+                file_path_str,
+                nodes,
+                edges,
+                file_node.id,
+            )
+        except RecursionError:
+            logger.warning(
+                "Profundidade da AST excedeu o limite de recursão em %s — "
+                "símbolos extraídos até aqui foram preservados (parse parcial).",
+                file_path_str,
+            )
 
         return nodes, edges
 
@@ -135,8 +151,18 @@ class TypeScriptParser(BaseParser):
         nodes: list[Node],
         edges: list[Edge],
         parent_id: str | None = None,
+        _depth: int = 0,
     ) -> None:
-        """Percorre a AST recursivamente extraindo símbolos."""
+        """Percorre a AST recursivamente extraindo símbolos.
+
+        Guard contra RecursionError em input válido profundamente aninhado
+        (bundles minificados com JSON/arrays de milhares de níveis): ao
+        passar de `_MAX_AST_DEPTH`, o walker para de descer — parse PARCIAL
+        em vez de estourar a pilha e descartar o arquivo inteiro. O mesmo
+        contrato "nunca levanta exceção" do fuzz suite.
+        """
+        if _depth > _MAX_AST_DEPTH:
+            return
         node_type = node.type
 
         if node_type in ("function_declaration", "function"):
@@ -156,14 +182,14 @@ class TypeScriptParser(BaseParser):
             # `useEffect(() => { ... })` — mesmo parent_id, pois o call em si
             # não introduz um novo escopo de função.
             for child in node.children:
-                self._walk_tree(child, source, file_path, nodes, edges, parent_id)
+                self._walk_tree(child, source, file_path, nodes, edges, parent_id, _depth + 1)
         elif node_type == "export_statement":
             # Export statement pode conter declarações
             for child in node.children:
-                self._walk_tree(child, source, file_path, nodes, edges, parent_id)
+                self._walk_tree(child, source, file_path, nodes, edges, parent_id, _depth + 1)
         else:
             for child in node.children:
-                self._walk_tree(child, source, file_path, nodes, edges, parent_id)
+                self._walk_tree(child, source, file_path, nodes, edges, parent_id, _depth + 1)
 
     def _handle_function(
         self,
@@ -205,7 +231,7 @@ class TypeScriptParser(BaseParser):
             ))
 
         for child in node.children:
-            self._walk_tree(child, source, file_path, nodes, edges, func_node.id)
+            self._walk_tree(child, source, file_path, nodes, edges, func_node.id, 1)
 
     def _handle_method(
         self,
@@ -247,7 +273,7 @@ class TypeScriptParser(BaseParser):
             ))
 
         for child in node.children:
-            self._walk_tree(child, source, file_path, nodes, edges, method_node.id)
+            self._walk_tree(child, source, file_path, nodes, edges, method_node.id, 1)
 
     def _handle_function_like(
         self,
@@ -305,7 +331,7 @@ class TypeScriptParser(BaseParser):
             next_parent_id = func_node.id
 
         for child in node.children:
-            self._walk_tree(child, source, file_path, nodes, edges, next_parent_id)
+            self._walk_tree(child, source, file_path, nodes, edges, next_parent_id, 1)
 
     def _handle_class(
         self,
@@ -377,7 +403,7 @@ class TypeScriptParser(BaseParser):
                                 ))
 
         for child in node.children:
-            self._walk_tree(child, source, file_path, nodes, edges, class_node.id)
+            self._walk_tree(child, source, file_path, nodes, edges, class_node.id, 1)
 
     def _handle_import(
         self,

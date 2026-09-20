@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -96,6 +98,27 @@ class GraphStore:
             self._conn = open_db(self.db_path)
         return self._conn
 
+    @contextmanager
+    def _transaction(self) -> Iterator[None]:
+        """Agrupa as mutações de um writer em uma transação atômica.
+
+        Sem isso, um writer multi-statement (ex: nodes → FTS) que falhe no
+        meio — lock concorrente com `eizo mcp` + `eizo init`, cenário
+        documentado — deixa a transação aberta e o PRÓXIMO `commit()` de
+        outra operação persiste o lote parcial com FTS dessincronizado.
+        Em exceção, faz rollback e re-levanta; no caminho feliz, commit.
+
+        Yields:
+            Nada.
+        """
+        try:
+            yield
+        except BaseException:
+            self.conn.rollback()
+            raise
+        else:
+            self.conn.commit()
+
     def close(self) -> None:
         """Fecha a conexão SQLite, se aberta. Idempotente.
 
@@ -153,28 +176,28 @@ class GraphStore:
             )
             for n in nodes
         ]
-        self.conn.executemany(
-            """INSERT OR REPLACE INTO nodes
-               (id, name, kind, file_path, language, line_start, line_end, docstring, code_snippet, metadata)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            data,
-        )
-        # Sincroniza índice FTS5: remove entradas antigas e reinsere, sempre
-        # ancorando no rowid determinístico (ver schema.fts_rowid).
-        if nodes:
+        with self._transaction():
             self.conn.executemany(
-                "DELETE FROM nodes_fts WHERE rowid = ?", [(fts_rowid(n.id),) for n in nodes]
+                """INSERT OR REPLACE INTO nodes
+                   (id, name, kind, file_path, language, line_start, line_end, docstring, code_snippet, metadata)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                data,
             )
-            fts_data = [
-                (fts_rowid(n.id), n.id, n.name or "", n.docstring or "", n.code_snippet or "")
-                for n in nodes
-            ]
-            self.conn.executemany(
-                "INSERT INTO nodes_fts (rowid, node_id, name, docstring, code_snippet) "
-                "VALUES (?, ?, ?, ?, ?)",
-                fts_data,
-            )
-        self.conn.commit()
+            # Sincroniza índice FTS5: remove entradas antigas e reinsere, sempre
+            # ancorando no rowid determinístico (ver schema.fts_rowid).
+            if nodes:
+                self.conn.executemany(
+                    "DELETE FROM nodes_fts WHERE rowid = ?", [(fts_rowid(n.id),) for n in nodes]
+                )
+                fts_data = [
+                    (fts_rowid(n.id), n.id, n.name or "", n.docstring or "", n.code_snippet or "")
+                    for n in nodes
+                ]
+                self.conn.executemany(
+                    "INSERT INTO nodes_fts (rowid, node_id, name, docstring, code_snippet) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    fts_data,
+                )
 
     def get_node(self, node_id: str) -> Node | None:
         """Busca um nó pelo ID.
@@ -298,23 +321,22 @@ class GraphStore:
         ).fetchall()
         node_ids = [r["id"] for r in rows]
 
-        self.conn.execute(
-            "DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file_path = ?)",
-            (file_path,),
-        )
-        self.conn.execute(
-            "DELETE FROM edges WHERE target_id IN (SELECT id FROM nodes WHERE file_path = ?)",
-            (file_path,),
-        )
-        self.conn.execute("DELETE FROM nodes WHERE file_path = ?", (file_path,))
-
-        # Limpa índice FTS5
-        if node_ids:
-            self.conn.executemany(
-                "DELETE FROM nodes_fts WHERE rowid = ?", [(fts_rowid(nid),) for nid in node_ids]
+        with self._transaction():
+            self.conn.execute(
+                "DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file_path = ?)",
+                (file_path,),
             )
+            self.conn.execute(
+                "DELETE FROM edges WHERE target_id IN (SELECT id FROM nodes WHERE file_path = ?)",
+                (file_path,),
+            )
+            self.conn.execute("DELETE FROM nodes WHERE file_path = ?", (file_path,))
 
-        self.conn.commit()
+            # Limpa índice FTS5
+            if node_ids:
+                self.conn.executemany(
+                    "DELETE FROM nodes_fts WHERE rowid = ?", [(fts_rowid(nid),) for nid in node_ids]
+                )
 
     def search_nodes_fts(
         self,
@@ -370,11 +392,11 @@ class GraphStore:
         Returns:
             Nada.
         """
-        self.conn.execute("DELETE FROM edges")
-        self.conn.execute("DELETE FROM nodes")
-        self.conn.execute("DELETE FROM nodes_fts")
-        self.conn.execute("DELETE FROM file_index")
-        self.conn.commit()
+        with self._transaction():
+            self.conn.execute("DELETE FROM edges")
+            self.conn.execute("DELETE FROM nodes")
+            self.conn.execute("DELETE FROM nodes_fts")
+            self.conn.execute("DELETE FROM file_index")
 
     # ─── File index (incremental) ───────────────────────────────
 

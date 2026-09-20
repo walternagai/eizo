@@ -55,6 +55,24 @@ class TestShouldIgnore:
         """Arquivos .ts normais não devem ser ignorados."""
         assert _should_ignore(Path("/repo/main.ts")) is False
 
+    def test_not_ignore_by_ancestor_dir_name(self) -> None:
+        """Ancestrais da raiz com nome em IGNORE_DIRS não filtram o repo.
+
+        Um repo clonado em ~/build/meu-projeto não pode ser filtrado inteiro
+        porque o caminho ABSOLUTO atravessa um diretório chamado "build" —
+        apenas as partes RELATIVAS à raiz contam.
+        """
+        root = Path("/home/user/build/meu-projeto")
+        assert _should_ignore(root / "main.py", root) is False
+        assert _should_ignore(Path("/home/user/venv/proj") / "app.py", Path("/home/user/venv/proj")) is False
+
+    def test_still_ignores_relative_ignore_dirs(self) -> None:
+        """Diretórios ignorados DENTRO do repo continuam filtrados."""
+        root = Path("/home/user/build/meu-projeto")
+        assert _should_ignore(root / "build" / "out.js", root) is True
+        assert _should_ignore(root / "node_modules" / "x.js", root) is True
+        assert _should_ignore(root / ".git" / "config", root) is True
+
 
 class TestGetParserForFile:
     """Testes para _get_parser_for_file."""
